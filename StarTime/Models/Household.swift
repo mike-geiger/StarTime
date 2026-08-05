@@ -1,11 +1,11 @@
-import FirebaseFirestore
+import Foundation
 
 struct Household: Identifiable, Codable {
-    @DocumentID var id: String?
+    var id: String
     var name: String
     var members: [String: Member]
     var lastJoinCode: String?
-    @ServerTimestamp var createdAt: Date?
+    var createdAt: Date?
 
     struct Member: Codable {
         var name: String

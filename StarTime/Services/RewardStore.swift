@@ -1,47 +1,68 @@
 import Combine
-import FirebaseFirestore
 import Foundation
 
 @MainActor
 final class RewardStore: ObservableObject {
     @Published private(set) var rewards: [Reward] = []
-    @Published private(set) var completions: [ChoreCompletion] = []
     @Published private(set) var redemptions: [Redemption] = []
+    /// Server-maintained point balances keyed by uid. The all-time
+    /// `completions` array this store used to hold existed only to compute
+    /// these, so it's gone entirely rather than refactored.
+    @Published private(set) var balances: [String: Int] = [:]
     @Published var errorMessage: String?
 
     private let service = RewardService()
-    private var rewardsListener: ListenerRegistration?
-    private var completionsListener: ListenerRegistration?
-    private var redemptionsListener: ListenerRegistration?
     private var householdId: String?
+    private var invalidationSubscription: AnyCancellable?
 
     func start(householdId: String) {
         guard self.householdId != householdId else { return }
         stop()
         self.householdId = householdId
-
-        rewardsListener = service.rewardsListener(householdId: householdId) { [weak self] in self?.rewards = $0 }
-        completionsListener = service.completionsListener(householdId: householdId) { [weak self] in self?.completions = $0 }
-        redemptionsListener = service.redemptionsListener(householdId: householdId) { [weak self] in self?.redemptions = $0 }
+        refresh()
     }
 
     func stop() {
-        rewardsListener?.remove()
-        completionsListener?.remove()
-        redemptionsListener?.remove()
-        rewardsListener = nil
-        completionsListener = nil
-        redemptionsListener = nil
+        invalidationSubscription = nil
         householdId = nil
         rewards = []
-        completions = []
         redemptions = []
+        balances = [:]
+    }
+
+    /// Balances are included deliberately: completing a chore over in the
+    /// Chores tab credits points, and the stream reports that as a
+    /// `balances` change — which is what the interim cross-store callback
+    /// used to cover.
+    func observe(_ realtime: RealtimeConnectionManager) {
+        invalidationSubscription = realtime.invalidations
+            .filter { $0.contains(.rewards) || $0.contains(.redemptions) || $0.contains(.balances) }
+            .sink { [weak self] _ in self?.refresh() }
+    }
+
+    func refresh() {
+        guard householdId != nil else { return }
+        Task {
+            do {
+                async let rewards = service.fetchRewards()
+                async let redemptions = service.fetchRedemptions()
+                async let balances = service.fetchBalances()
+                self.rewards = try await rewards
+                self.redemptions = try await redemptions
+                self.balances = try await balances
+            } catch {
+                // Deliberately not surfaced: a background refetch can fail
+                // transiently (e.g. mid sign-out, when the profile read
+                // 404s), and turning that into a modal alert would block
+                // the UI for something the next refresh fixes on its own.
+                // Only user-initiated actions populate `errorMessage`.
+                print("RewardStore refresh failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     func balance(for uid: String) -> Int {
-        let earned = completions.filter { $0.completedByUID == uid }.reduce(0) { $0 + $1.pointsAwarded }
-        let spent = redemptions.filter { $0.redeemedByUID == uid }.reduce(0) { $0 + $1.pointsSpent }
-        return earned - spent
+        balances[uid] ?? 0
     }
 
     func redemptions(for uid: String) -> [Redemption] {
@@ -50,46 +71,33 @@ final class RewardStore: ObservableObject {
             .sorted { ($0.redeemedAt ?? .distantPast) > ($1.redeemedAt ?? .distantPast) }
     }
 
+    /// No local balance pre-check any more: the server's conditional
+    /// transaction is the only thing that can decide affordability without
+    /// racing. `canAfford` in the UI still gates the button for a sensible
+    /// default state, but a stale local balance can no longer overdraw.
     func redeem(_ reward: Reward, forUID uid: String, name: String) {
-        guard let householdId, let rewardId = reward.id else { return }
-        guard balance(for: uid) >= reward.pointCost else { return }
-        let redemption = Redemption(
-            rewardId: rewardId,
-            rewardName: reward.name,
-            pointsSpent: reward.pointCost,
-            redeemedByUID: uid,
-            redeemedByName: name
-        )
-        do {
-            try service.recordRedemption(householdId: householdId, redemption: redemption)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        guard let rewardId = reward.id else { return }
+        perform { try await self.service.redeem(rewardId: rewardId, redeemedByUID: uid, redeemedByName: name) }
     }
 
     func addReward(_ reward: Reward) {
-        guard let householdId else { return }
-        do {
-            try service.addReward(householdId: householdId, reward: reward)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        perform { try await self.service.saveReward(reward) }
     }
 
     func updateReward(_ reward: Reward) {
-        guard let householdId else { return }
-        do {
-            try service.updateReward(householdId: householdId, reward: reward)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        perform { try await self.service.saveReward(reward) }
     }
 
     func deleteReward(_ reward: Reward) {
-        guard let householdId, let rewardId = reward.id else { return }
+        guard let rewardId = reward.id else { return }
+        perform { try await self.service.deleteReward(rewardId: rewardId) }
+    }
+
+    private func perform(_ work: @escaping () async throws -> Void) {
         Task {
             do {
-                try await service.deleteReward(householdId: householdId, rewardId: rewardId)
+                try await work()
+                refresh()
             } catch {
                 errorMessage = error.localizedDescription
             }

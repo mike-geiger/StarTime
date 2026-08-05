@@ -1,12 +1,12 @@
-import FirebaseFirestore
+import Foundation
 
 struct Reward: Identifiable, Codable, Equatable {
-    @DocumentID var id: String?
+    var id: String?
     var name: String
     var icon: String
     var pointCost: Int
     var isActive: Bool
-    @ServerTimestamp var createdAt: Date?
+    var createdAt: Date?
 
     static let iconChoices = [
         "gamecontroller.fill", "tv.fill", "gift.fill", "dollarsign.circle.fill",

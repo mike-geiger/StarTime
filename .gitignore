@@ -1,1 +1,20 @@
 StarTime/GoogleService-Info.plist
+
+# AWS CDK backend
+backend/cdk/node_modules/
+backend/cdk/cdk.out/
+backend/cdk/dist/
+backend/cdk/outputs/
+# Caches context lookups (e.g. AZs) per CDK run; with per-test-run ephemeral
+# stages this would otherwise accumulate stale entries for stacks that no
+# longer exist, so it's regenerated on demand instead of committed.
+backend/cdk/cdk.context.json
+
+# Firebase Admin SDK service-account keys (Phase 6 migration). These bypass
+# security rules entirely, so keep them out of the repo -- the recommended
+# home is ~/.config/startime/, referenced via GOOGLE_APPLICATION_CREDENTIALS.
+# These patterns are a backstop, not the primary defense.
+*firebase-adminsdk*.json
+*service-account*.json
+**/.secrets/
+

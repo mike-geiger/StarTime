@@ -1,8 +1,11 @@
-import FirebaseFirestore
+import Foundation
 
 struct ChoreService {
-    private let db = Firestore.firestore()
+    private var api: APIClient { APIClient.shared }
 
+    /// Canonical formatter for `ChoreCompletion.scheduledDate`. Completions
+    /// are matched by exact string equality on this field (streaks, "already
+    /// done today"), so nothing may format that date ad hoc.
     static func dayString(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -10,40 +13,43 @@ struct ChoreService {
         return formatter.string(from: date)
     }
 
-    func choresListener(householdId: String, onChange: @escaping ([Chore]) -> Void) -> ListenerRegistration {
-        db.collection("households").document(householdId).collection("chores")
-            .whereField("isActive", isEqualTo: true)
-            .addSnapshotListener { snapshot, _ in
-                let chores = snapshot?.documents.compactMap { try? $0.data(as: Chore.self) } ?? []
-                onChange(chores)
-            }
+    @MainActor
+    func fetchChores() async throws -> [Chore] {
+        struct Response: Decodable { let chores: [Chore] }
+        return try await api.send("GET", "chores", as: Response.self).chores
     }
 
-    func completionsListener(householdId: String, since: Date, onChange: @escaping ([ChoreCompletion]) -> Void) -> ListenerRegistration {
-        db.collection("households").document(householdId).collection("completions")
-            .whereField("completedAt", isGreaterThan: Timestamp(date: since))
-            .addSnapshotListener { snapshot, _ in
-                let completions = snapshot?.documents.compactMap { try? $0.data(as: ChoreCompletion.self) } ?? []
-                onChange(completions)
-            }
+    /// `since` is an ISO8601 instant; omitting it returns the full history.
+    @MainActor
+    func fetchCompletions(since: Date?) async throws -> [ChoreCompletion] {
+        struct Response: Decodable { let completions: [ChoreCompletion] }
+        var path = "completions"
+        if let since {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let encoded = formatter.string(from: since)
+                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            path += "?since=\(encoded)"
+        }
+        return try await api.send("GET", path, as: Response.self).completions
     }
 
-    func addChore(householdId: String, chore: Chore) throws {
-        let ref = db.collection("households").document(householdId).collection("chores").document()
-        try ref.setData(from: chore)
+    @MainActor
+    func saveChore(_ chore: Chore) async throws {
+        if let id = chore.id {
+            try await api.send("PUT", "chores/\(id)", body: chore)
+        } else {
+            try await api.send("POST", "chores", body: chore)
+        }
     }
 
-    func updateChore(householdId: String, chore: Chore) throws {
-        guard let choreId = chore.id else { return }
-        try db.collection("households").document(householdId).collection("chores").document(choreId).setData(from: chore)
+    @MainActor
+    func deleteChore(choreId: String) async throws {
+        try await api.send("DELETE", "chores/\(choreId)")
     }
 
-    func deleteChore(householdId: String, choreId: String) async throws {
-        try await db.collection("households").document(householdId).collection("chores").document(choreId).delete()
-    }
-
-    func recordCompletion(householdId: String, completion: ChoreCompletion) throws {
-        let ref = db.collection("households").document(householdId).collection("completions").document()
-        try ref.setData(from: completion)
+    @MainActor
+    func recordCompletion(_ completion: ChoreCompletion) async throws {
+        try await api.send("POST", "completions", body: completion)
     }
 }

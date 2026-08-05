@@ -1,5 +1,4 @@
 import Combine
-import FirebaseFirestore
 import Foundation
 
 @MainActor
@@ -9,34 +8,55 @@ final class ChoreStore: ObservableObject {
     @Published var errorMessage: String?
 
     private let service = ChoreService()
-    private var choresListener: ListenerRegistration?
-    private var completionsListener: ListenerRegistration?
     private var householdId: String?
+    private var invalidationSubscription: AnyCancellable?
 
+    /// `householdId` is no longer passed to the backend (handlers derive it
+    /// from the caller's token) — it's kept as the change token that tells
+    /// this store when it's looking at a different household.
     func start(householdId: String) {
         guard self.householdId != householdId else { return }
         stop()
         self.householdId = householdId
-
-        choresListener = service.choresListener(householdId: householdId) { [weak self] chores in
-            self?.chores = chores
-        }
-
-        // 60 days back is plenty of history for any realistic streak.
-        let since = Calendar.current.date(byAdding: .day, value: -60, to: Date()) ?? .distantPast
-        completionsListener = service.completionsListener(householdId: householdId, since: since) { [weak self] completions in
-            self?.completions = completions
-        }
+        refresh()
     }
 
     func stop() {
-        choresListener?.remove()
-        completionsListener?.remove()
-        choresListener = nil
-        completionsListener = nil
+        invalidationSubscription = nil
         householdId = nil
         chores = []
         completions = []
+    }
+
+    /// Refetch when the server says these collections changed elsewhere —
+    /// another family member's device, or this one's own writes coming back
+    /// around. Replaces the Firestore snapshot listeners.
+    func observe(_ realtime: RealtimeConnectionManager) {
+        invalidationSubscription = realtime.invalidations
+            .filter { $0.contains(.chores) || $0.contains(.completions) }
+            .sink { [weak self] _ in self?.refresh() }
+    }
+
+    /// Replaces what the two Firestore snapshot listeners used to do. Called
+    /// on start and after every mutation; Phase 5 adds a WebSocket
+    /// invalidation signal that calls this on remote changes too.
+    func refresh() {
+        guard householdId != nil else { return }
+        Task {
+            do {
+                async let chores = service.fetchChores()
+                // 60 days back is plenty of history for any realistic streak.
+                let since = Calendar.current.date(byAdding: .day, value: -60, to: Date()) ?? .distantPast
+                async let completions = service.fetchCompletions(since: since)
+                self.chores = try await chores
+                self.completions = try await completions
+            } catch {
+                // Same as RewardStore.refresh: background refetch failures
+                // are transient and self-correcting, so they don't get
+                // surfaced as user-facing errors.
+                print("ChoreStore refresh failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// Chores due today, optionally restricted to one assignee.
@@ -87,7 +107,7 @@ final class ChoreStore: ObservableObject {
     }
 
     func complete(_ chore: Chore, assigneeName: String) {
-        guard let householdId, let choreId = chore.id else { return }
+        guard let choreId = chore.id else { return }
         let completion = ChoreCompletion(
             choreId: choreId,
             choreTitle: chore.title,
@@ -96,36 +116,29 @@ final class ChoreStore: ObservableObject {
             completedByName: assigneeName,
             scheduledDate: ChoreService.dayString(Date())
         )
-        do {
-            try service.recordCompletion(householdId: householdId, completion: completion)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        perform { try await self.service.recordCompletion(completion) }
     }
 
     func addChore(_ chore: Chore) {
-        guard let householdId else { return }
-        do {
-            try service.addChore(householdId: householdId, chore: chore)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        perform { try await self.service.saveChore(chore) }
     }
 
     func updateChore(_ chore: Chore) {
-        guard let householdId else { return }
-        do {
-            try service.updateChore(householdId: householdId, chore: chore)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        perform { try await self.service.saveChore(chore) }
     }
 
     func deleteChore(_ chore: Chore) {
-        guard let householdId, let choreId = chore.id else { return }
+        guard let choreId = chore.id else { return }
+        perform { try await self.service.deleteChore(choreId: choreId) }
+    }
+
+    /// Runs a mutation, then refetches — without a live listener, a write
+    /// isn't visible until we read it back.
+    private func perform(_ work: @escaping () async throws -> Void) {
         Task {
             do {
-                try await service.deleteChore(householdId: householdId, choreId: choreId)
+                try await work()
+                refresh()
             } catch {
                 errorMessage = error.localizedDescription
             }

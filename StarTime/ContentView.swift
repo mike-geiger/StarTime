@@ -1,4 +1,3 @@
-import FirebaseAuth
 import SwiftUI
 
 /// Auth gate: routes to sign-in, household setup, or the main app depending
@@ -9,7 +8,9 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if let user = auth.user {
+            if auth.isRestoringSession {
+                ProgressView()
+            } else if let user = auth.user {
                 if householdStore.isLoading {
                     ProgressView()
                 } else if householdStore.household != nil {
@@ -22,9 +23,12 @@ struct ContentView: View {
             }
         }
         .environmentObject(householdStore)
+        .task {
+            await auth.restoreSession()
+        }
         .task(id: auth.user?.uid) {
-            if let uid = auth.user?.uid {
-                await householdStore.loadForCurrentUser(uid: uid)
+            if auth.user != nil {
+                await householdStore.loadForCurrentUser()
             } else {
                 householdStore.reset()
             }

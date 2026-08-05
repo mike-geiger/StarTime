@@ -1,0 +1,23 @@
+// Backend config, injected at build time. Override from the command line, e.g.:
+//   xcodebuild build ... STARTIME_USER_POOL_ID=us-west-2_xxx STARTIME_USER_POOL_CLIENT_ID=xxx
+// with-ephemeral-stack.sh does exactly this using its captured stack outputs.
+STARTIME_USER_POOL_ID =
+STARTIME_USER_POOL_CLIENT_ID =
+STARTIME_AWS_REGION = us-west-2
+// A URL contains "//", which xcconfig treats as a line comment -- so the
+// scheme is stored separately and recombined in the Info.plist entry.
+STARTIME_API_SCHEME = https
+STARTIME_API_HOST =
+STARTIME_WS_SCHEME = wss
+STARTIME_WS_HOST =
+
+// Xcode's synthetic GENERATE_INFOPLIST_FILE generator only honors a fixed
+// set of known INFOPLIST_KEY_* entries -- arbitrary custom keys are silently
+// dropped. A real Info.plist with $(VAR) substitution is the reliable way
+// to inject build-time values.
+// Deliberately outside StarTime/ -- that folder is a synchronized group
+// (Xcode 16), which auto-sweeps anything under it into Copy Bundle Resources
+// with no working exception mechanism to stop it for the Info.plist file
+// specifically, causing a "Multiple commands produce Info.plist" conflict.
+GENERATE_INFOPLIST_FILE = NO
+INFOPLIST_FILE = SupportingFiles/Info.plist

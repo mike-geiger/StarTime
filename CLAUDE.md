@@ -10,25 +10,31 @@ StarTime is a SwiftUI iOS app for families to track kids' chores and reward them
 
 There's no Makefile/fastlane — use `xcodebuild` directly. The only scheme is `StarTime`.
 
+**Every `xcodebuild` invocation needs `-skipPackagePluginValidation`.** `smithy-swift` (a transitive dependency of `aws-sdk-swift`, added for the AWS backend migration) ships a code-generation build tool plugin, and Xcode's command-line plugin-trust prompt doesn't persist between `xcodebuild` invocations the way it does in the Xcode GUI — omit the flag and the build fails at "Validate plug-in “SmithyCodeGeneratorPlugin”" every time, not just the first.
+
 ```bash
 # Build for the simulator
 xcodebuild build -project StarTime.xcodeproj -scheme StarTime \
-  -destination 'platform=iOS Simulator,name=iPhone 17'
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -skipPackagePluginValidation
 
 # Run unit tests (StarTimeTests)
 xcodebuild test -project StarTime.xcodeproj -scheme StarTime \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
-  -only-testing:StarTimeTests
+  -only-testing:StarTimeTests \
+  -skipPackagePluginValidation
 
 # Run a single UI test
 xcodebuild test -project StarTime.xcodeproj -scheme StarTime \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
-  -only-testing:StarTimeUITests/StarTimeUITests/testStage2InviteChildAndAssignChore
+  -only-testing:StarTimeUITests/StarTimeUITests/testStage2InviteChildAndAssignChore \
+  -skipPackagePluginValidation
 
 # Run the full UI test suite (hits a real Firebase project — see below)
 xcodebuild test -project StarTime.xcodeproj -scheme StarTime \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
-  -only-testing:StarTimeUITests
+  -only-testing:StarTimeUITests \
+  -skipPackagePluginValidation
 ```
 
 Or just open `StarTime.xcodeproj` in Xcode and use Cmd+R / Cmd+U.

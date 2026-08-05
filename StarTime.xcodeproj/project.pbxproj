@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		9CF987F954F97C1FB7353E60 /* AWSCognitoIdentityProvider in Frameworks */ = {isa = PBXBuildFile; productRef = F25567F945D05BAF91915AE5 /* AWSCognitoIdentityProvider */; };
 		F400E16B30009E6400F4C9BC /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = F400E16A30009E6400F4C9BC /* FirebaseAuth */; };
 		F400E16D30009E6400F4C9BC /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = F400E16C30009E6400F4C9BC /* FirebaseFirestore */; };
 /* End PBXBuildFile section */
@@ -29,24 +30,32 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		685E9FAD1E6549A446D9B28B /* StarTime.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = StarTime.xcconfig; sourceTree = "<group>"; };
 		F400E13D300094DF00F4C9BC /* StarTime.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StarTime.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F400E14A300094E000F4C9BC /* StarTimeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StarTimeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F400E154300094E000F4C9BC /* StarTimeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StarTimeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FFB3AAF4B0AFA30D25341AB9 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		F400E13F300094DF00F4C9BC /* StarTime */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = StarTime;
 			sourceTree = "<group>";
 		};
 		F400E14D300094E000F4C9BC /* StarTimeTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = StarTimeTests;
 			sourceTree = "<group>";
 		};
 		F400E157300094E000F4C9BC /* StarTimeUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = StarTimeUITests;
 			sourceTree = "<group>";
 		};
@@ -59,6 +68,7 @@
 			files = (
 				F400E16B30009E6400F4C9BC /* FirebaseAuth in Frameworks */,
 				F400E16D30009E6400F4C9BC /* FirebaseFirestore in Frameworks */,
+				9CF987F954F97C1FB7353E60 /* AWSCognitoIdentityProvider in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +89,24 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		85850640A48D19648AEA8357 /* SupportingFiles */ = {
+			isa = PBXGroup;
+			children = (
+				FFB3AAF4B0AFA30D25341AB9 /* Info.plist */,
+			);
+			name = SupportingFiles;
+			path = SupportingFiles;
+			sourceTree = "<group>";
+		};
+		A7E812D8DCC12D5062F3D830 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				685E9FAD1E6549A446D9B28B /* StarTime.xcconfig */,
+			);
+			name = Config;
+			path = StarTime/Config;
+			sourceTree = "<group>";
+		};
 		F400E134300094DF00F4C9BC = {
 			isa = PBXGroup;
 			children = (
@@ -86,6 +114,8 @@
 				F400E14D300094E000F4C9BC /* StarTimeTests */,
 				F400E157300094E000F4C9BC /* StarTimeUITests */,
 				F400E13E300094DF00F4C9BC /* Products */,
+				A7E812D8DCC12D5062F3D830 /* Config */,
+				85850640A48D19648AEA8357 /* SupportingFiles */,
 			);
 			sourceTree = "<group>";
 		};
@@ -121,6 +151,7 @@
 			packageProductDependencies = (
 				F400E16A30009E6400F4C9BC /* FirebaseAuth */,
 				F400E16C30009E6400F4C9BC /* FirebaseFirestore */,
+				F25567F945D05BAF91915AE5 /* AWSCognitoIdentityProvider */,
 			);
 			productName = StarTime;
 			productReference = F400E13D300094DF00F4C9BC /* StarTime.app */;
@@ -143,8 +174,6 @@
 				F400E14D300094E000F4C9BC /* StarTimeTests */,
 			);
 			name = StarTimeTests;
-			packageProductDependencies = (
-			);
 			productName = StarTimeTests;
 			productReference = F400E14A300094E000F4C9BC /* StarTimeTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -166,8 +195,6 @@
 				F400E157300094E000F4C9BC /* StarTimeUITests */,
 			);
 			name = StarTimeUITests;
-			packageProductDependencies = (
-			);
 			productName = StarTimeUITests;
 			productReference = F400E154300094E000F4C9BC /* StarTimeUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -206,6 +233,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				F400E16930009E6400F4C9BC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				E071D6AC0324A584D6C829AE /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F400E13E300094DF00F4C9BC /* Products */;
@@ -404,6 +432,7 @@
 		};
 		F400E15F300094E000F4C9BC /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 685E9FAD1E6549A446D9B28B /* StarTime.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -436,6 +465,7 @@
 		};
 		F400E160300094E000F4C9BC /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 685E9FAD1E6549A446D9B28B /* StarTime.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -592,6 +622,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		E071D6AC0324A584D6C829AE /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/awslabs/aws-sdk-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
 		F400E16930009E6400F4C9BC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
@@ -603,6 +641,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		F25567F945D05BAF91915AE5 /* AWSCognitoIdentityProvider */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E071D6AC0324A584D6C829AE /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSCognitoIdentityProvider;
+		};
 		F400E16A30009E6400F4C9BC /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F400E16930009E6400F4C9BC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;

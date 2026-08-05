@@ -430,9 +430,9 @@ final class StarTimeUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.4)
     }
 
-    /// Deletes the currently signed-in account (and its Firestore data via
+    /// Deletes the currently signed-in account (and its household data via
     /// the app's own cascading cleanup) so test runs don't accumulate
-    /// throwaway accounts/households in Firebase. Leaves the app signed out.
+    /// throwaway accounts/households in the backend. Leaves the app signed out.
     private func deleteCurrentAccount(app: XCUIApplication) {
         if !app.buttons["deleteAccountRowButton"].waitForExistence(timeout: 3) {
             tapTab(app, "Settings")
@@ -467,8 +467,8 @@ final class StarTimeUITests: XCTestCase {
         dismissSavePasswordPromptIfPresent(app: app)
     }
 
-    /// A prior run's session may still be active on this simulator (Firebase
-    /// Auth persists across launches) — reset to a clean signed-out state
+    /// A prior run's session may still be active on this simulator (Cognito
+    /// tokens persist across launches via the Keychain) — reset to a clean signed-out state
     /// regardless of whether that leaves us on the auth-gate chooser screen
     /// or deep inside the main tab view.
     private func resetToSignedOutState(app: XCUIApplication) {

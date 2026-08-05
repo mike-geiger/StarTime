@@ -1,10 +1,9 @@
-import FirebaseAuth
 import SwiftUI
 
 struct ChoresView: View {
     @EnvironmentObject private var auth: AuthService
     @EnvironmentObject private var householdStore: HouseholdStore
-    @StateObject private var choreStore = ChoreStore()
+    @EnvironmentObject private var choreStore: ChoreStore
 
     @State private var showingAddChore = false
     @State private var editingChore: Chore?
@@ -41,11 +40,6 @@ struct ChoresView: View {
             }
             .sheet(item: $editingChore) { chore in
                 AddEditChoreView(choreStore: choreStore, household: householdStore.household, editingChore: chore)
-            }
-        }
-        .task(id: householdStore.household?.id) {
-            if let id = householdStore.household?.id {
-                choreStore.start(householdId: id)
             }
         }
     }

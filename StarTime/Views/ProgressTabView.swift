@@ -1,11 +1,10 @@
 import Charts
-import FirebaseAuth
 import SwiftUI
 
 struct ProgressTabView: View {
     @EnvironmentObject private var auth: AuthService
     @EnvironmentObject private var householdStore: HouseholdStore
-    @StateObject private var choreStore = ChoreStore()
+    @EnvironmentObject private var choreStore: ChoreStore
 
     private var isParent: Bool { householdStore.profile?.role == .parent }
 
@@ -33,11 +32,6 @@ struct ProgressTabView: View {
                 }
             }
             .navigationTitle("Progress")
-        }
-        .task(id: householdStore.household?.id) {
-            if let id = householdStore.household?.id {
-                choreStore.start(householdId: id)
-            }
         }
     }
 

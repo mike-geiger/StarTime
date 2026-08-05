@@ -10,65 +10,58 @@ final class HouseholdStore: ObservableObject {
 
     private let service = HouseholdService()
 
-    func loadForCurrentUser(uid: String) async {
+    // None of these take a uid any more: every handler derives the caller's
+    // identity from the Cognito token claims the API Gateway authorizer
+    // already validated, so a client-supplied uid would be both redundant
+    // and misleading about who actually controls identity.
+
+    func loadForCurrentUser() async {
         isLoading = true
         defer { isLoading = false }
         do {
-            guard let profile = try await service.fetchProfile(uid: uid) else {
-                self.profile = nil
-                self.household = nil
-                return
-            }
-            self.profile = profile
-            if let householdId = profile.householdId {
-                self.household = try await service.fetchHousehold(id: householdId)
-            } else {
-                self.household = nil
-            }
+            let me = try await service.fetchMe()
+            profile = me.profile
+            household = me.household
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func createHousehold(name: String, uid: String, displayName: String) async {
+    func createHousehold(name: String, displayName: String) async {
         do {
-            household = try await service.createHousehold(name: name, uid: uid, displayName: displayName)
+            household = try await service.createHousehold(name: name, displayName: displayName)
             profile = UserProfile(name: displayName, householdId: household?.id, role: .parent)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func joinHousehold(code: String, uid: String, displayName: String) async {
+    func joinHousehold(code: String, displayName: String) async {
         do {
-            household = try await service.joinHousehold(code: code.uppercased(), uid: uid, displayName: displayName)
-            profile = try await service.fetchProfile(uid: uid)
+            household = try await service.joinHousehold(code: code.uppercased(), displayName: displayName)
+            profile = try await service.fetchMe().profile
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func generateInviteCode(role: Household.Role, uid: String) async -> String? {
-        guard let householdId = household?.id else { return nil }
+    func generateInviteCode(role: Household.Role) async -> String? {
         do {
-            return try await service.generateInviteCode(householdId: householdId, role: role, createdByUID: uid)
+            return try await service.generateInviteCode(role: role)
         } catch {
             errorMessage = error.localizedDescription
             return nil
         }
     }
 
-    /// Cleans up this user's Firestore data (household membership, cascading
-    /// to a full household delete if they were the last member, plus their
-    /// own profile doc). Returns whether it succeeded — the caller must only
-    /// delete the Auth account itself on success, since that step can't be
-    /// undone and shouldn't proceed while this data is potentially orphaned.
-    func deleteAccountData(uid: String) async -> Bool {
+    /// Cleans up this user's household data (membership, cascading to a full
+    /// household delete if they were the last member, plus their own
+    /// profile). Returns whether it succeeded — the caller must only delete
+    /// the Auth account itself on success, since that step can't be undone
+    /// and shouldn't proceed while this data is potentially orphaned.
+    func deleteAccountData() async -> Bool {
         do {
-            if let householdId = household?.id {
-                try await service.leaveHousehold(householdId: householdId, uid: uid)
-            }
-            try await service.deleteUserProfile(uid: uid)
+            try await service.deleteAccountData()
             return true
         } catch {
             errorMessage = error.localizedDescription

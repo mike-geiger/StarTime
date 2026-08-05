@@ -1,7 +1,7 @@
-import FirebaseFirestore
+import Foundation
 
 struct Chore: Identifiable, Codable, Equatable {
-    @DocumentID var id: String?
+    var id: String?
     var title: String
     var icon: String
     var points: Int
@@ -9,7 +9,7 @@ struct Chore: Identifiable, Codable, Equatable {
     var weeklyDays: [Int]
     var assignedToUID: String
     var isActive: Bool
-    @ServerTimestamp var createdAt: Date?
+    var createdAt: Date?
 
     enum Recurrence: String, Codable, CaseIterable {
         case once

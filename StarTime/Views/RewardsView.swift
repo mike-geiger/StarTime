@@ -1,10 +1,9 @@
-import FirebaseAuth
 import SwiftUI
 
 struct RewardsView: View {
     @EnvironmentObject private var auth: AuthService
     @EnvironmentObject private var householdStore: HouseholdStore
-    @StateObject private var rewardStore = RewardStore()
+    @EnvironmentObject private var rewardStore: RewardStore
 
     @State private var showingAddReward = false
     @State private var editingReward: Reward?
@@ -89,10 +88,21 @@ struct RewardsView: View {
                 AddEditRewardView(rewardStore: rewardStore, editingReward: reward)
             }
         }
-        .task(id: householdStore.household?.id) {
-            if let id = householdStore.household?.id {
-                rewardStore.start(householdId: id)
-            }
+        // Redeeming can now fail server-side (not enough points, including
+        // the racing-redemption case the old local check couldn't catch),
+        // so that has to be visible rather than silently doing nothing.
+        .alert(
+            // Neutral, because `errorMessage` covers reward edits/deletes
+            // too -- the message text carries the specifics.
+            "Something went wrong",
+            isPresented: Binding(
+                get: { rewardStore.errorMessage != nil },
+                set: { if !$0 { rewardStore.errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { rewardStore.errorMessage = nil }
+        } message: {
+            Text(rewardStore.errorMessage ?? "")
         }
     }
 

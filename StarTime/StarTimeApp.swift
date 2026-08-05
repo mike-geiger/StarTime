@@ -14,6 +14,8 @@ struct StarTimeApp: App {
 
     init() {
         FirebaseApp.configure()
+        // Chores/Rewards still run on Firestore until Phases 3-4, so Firebase
+        // stays configured; only Auth has moved to Cognito so far.
     }
 
     var body: some Scene {

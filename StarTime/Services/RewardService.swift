@@ -1,48 +1,74 @@
-import FirebaseFirestore
+import Foundation
+
+enum RewardServiceError: LocalizedError {
+    case insufficientBalance(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .insufficientBalance(let message):
+            return message
+        }
+    }
+}
 
 struct RewardService {
-    private let db = Firestore.firestore()
+    private var api: APIClient { APIClient.shared }
 
-    func rewardsListener(householdId: String, onChange: @escaping ([Reward]) -> Void) -> ListenerRegistration {
-        db.collection("households").document(householdId).collection("rewards")
-            .whereField("isActive", isEqualTo: true)
-            .addSnapshotListener { snapshot, _ in
-                onChange(snapshot?.documents.compactMap { try? $0.data(as: Reward.self) } ?? [])
-            }
+    @MainActor
+    func fetchRewards() async throws -> [Reward] {
+        struct Response: Decodable { let rewards: [Reward] }
+        return try await api.send("GET", "rewards", as: Response.self).rewards
     }
 
-    /// All-time completions (no start-date cutoff, unlike the streak-focused
-    /// listener in ChoreService) since point balances are cumulative for life.
-    func completionsListener(householdId: String, onChange: @escaping ([ChoreCompletion]) -> Void) -> ListenerRegistration {
-        db.collection("households").document(householdId).collection("completions")
-            .addSnapshotListener { snapshot, _ in
-                onChange(snapshot?.documents.compactMap { try? $0.data(as: ChoreCompletion.self) } ?? [])
-            }
+    @MainActor
+    func fetchRedemptions() async throws -> [Redemption] {
+        struct Response: Decodable { let redemptions: [Redemption] }
+        return try await api.send("GET", "redemptions", as: Response.self).redemptions
     }
 
-    func redemptionsListener(householdId: String, onChange: @escaping ([Redemption]) -> Void) -> ListenerRegistration {
-        db.collection("households").document(householdId).collection("redemptions")
-            .addSnapshotListener { snapshot, _ in
-                onChange(snapshot?.documents.compactMap { try? $0.data(as: Redemption.self) } ?? [])
-            }
+    /// Every household member's point balance, keyed by uid. Replaces
+    /// summing the lifetime completion/redemption ledger client-side.
+    @MainActor
+    func fetchBalances() async throws -> [String: Int] {
+        struct Response: Decodable { let balances: [String: Int] }
+        return try await api.send("GET", "balances", as: Response.self).balances
     }
 
-    func addReward(householdId: String, reward: Reward) throws {
-        let ref = db.collection("households").document(householdId).collection("rewards").document()
-        try ref.setData(from: reward)
+    @MainActor
+    func saveReward(_ reward: Reward) async throws {
+        if let id = reward.id {
+            try await api.send("PUT", "rewards/\(id)", body: reward)
+        } else {
+            try await api.send("POST", "rewards", body: reward)
+        }
     }
 
-    func updateReward(householdId: String, reward: Reward) throws {
-        guard let rewardId = reward.id else { return }
-        try db.collection("households").document(householdId).collection("rewards").document(rewardId).setData(from: reward)
+    @MainActor
+    func deleteReward(rewardId: String) async throws {
+        try await api.send("DELETE", "rewards/\(rewardId)")
     }
 
-    func deleteReward(householdId: String, rewardId: String) async throws {
-        try await db.collection("households").document(householdId).collection("rewards").document(rewardId).delete()
-    }
-
-    func recordRedemption(householdId: String, redemption: Redemption) throws {
-        let ref = db.collection("households").document(householdId).collection("redemptions").document()
-        try ref.setData(from: redemption)
+    /// Point cost is looked up server-side from the stored reward, so only
+    /// the reward's id and who's redeeming it are sent.
+    @MainActor
+    func redeem(rewardId: String, redeemedByUID: String, redeemedByName: String) async throws {
+        struct Body: Encodable {
+            let rewardId: String
+            let redeemedByUID: String
+            let redeemedByName: String
+        }
+        do {
+            try await api.send(
+                "POST", "redemptions",
+                body: Body(rewardId: rewardId, redeemedByUID: redeemedByUID, redeemedByName: redeemedByName)
+            )
+        } catch let error as APIError where error.statusCode == 409 {
+            // The balance condition failed inside the transaction -- i.e.
+            // not enough points, including the racing-redemption case the
+            // old client-side check couldn't catch.
+            throw RewardServiceError.insufficientBalance(
+                error.message ?? "That's more points than you have saved up."
+            )
+        }
     }
 }

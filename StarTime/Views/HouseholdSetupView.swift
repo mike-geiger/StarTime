@@ -1,4 +1,3 @@
-import FirebaseAuth
 import SwiftUI
 
 struct HouseholdSetupView: View {
@@ -70,11 +69,10 @@ struct HouseholdSetupView: View {
     }
 
     private func deleteAccount() {
-        guard let uid = auth.user?.uid else { return }
         isDeletingAccount = true
         deleteErrorMessage = nil
         Task {
-            let dataCleanedUp = await householdStore.deleteAccountData(uid: uid)
+            let dataCleanedUp = await householdStore.deleteAccountData()
             guard dataCleanedUp else {
                 deleteErrorMessage = householdStore.errorMessage ?? "Something went wrong deleting your data. Please try again."
                 isDeletingAccount = false
@@ -101,10 +99,9 @@ struct HouseholdSetupView: View {
             }
 
             Button("Create") {
-                guard let uid = auth.user?.uid else { return }
                 isSubmitting = true
                 Task {
-                    await householdStore.createHousehold(name: householdName, uid: uid, displayName: displayName)
+                    await householdStore.createHousehold(name: householdName, displayName: displayName)
                     isSubmitting = false
                 }
             }
@@ -129,10 +126,9 @@ struct HouseholdSetupView: View {
             }
 
             Button("Join") {
-                guard let uid = auth.user?.uid else { return }
                 isSubmitting = true
                 Task {
-                    await householdStore.joinHousehold(code: inviteCode, uid: uid, displayName: displayName)
+                    await householdStore.joinHousehold(code: inviteCode, displayName: displayName)
                     isSubmitting = false
                 }
             }
