@@ -98,7 +98,7 @@ struct ChoresView: View {
                     .foregroundStyle(done ? .green : .secondary)
             }
             .buttonStyle(.plain)
-            .disabled(done)
+            .disabled(done || choreStore.isCompleting(chore))
             .accessibilityIdentifier("completeChoreButton-\(chore.id ?? "")")
         }
         .contentShape(Rectangle())

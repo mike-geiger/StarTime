@@ -5,6 +5,11 @@ import Foundation
 final class ChoreStore: ObservableObject {
     @Published private(set) var chores: [Chore] = []
     @Published private(set) var completions: [ChoreCompletion] = []
+    /// Chore ids with a completion request in flight. `isCompletedToday` only
+    /// flips once the write lands *and* the refetch returns, which leaves a
+    /// few hundred milliseconds where the button is still tappable — long
+    /// enough to double-credit a chore with one impatient double-tap.
+    @Published private(set) var pendingCompletions: Set<String> = []
     @Published var errorMessage: String?
 
     private let service = ChoreService()
@@ -22,7 +27,12 @@ final class ChoreStore: ObservableObject {
     }
 
     func stop() {
-        invalidationSubscription = nil
+        // Deliberately does NOT drop `invalidationSubscription`: `start()`
+        // calls `stop()` as its reset step, so clearing it here silently
+        // unsubscribed whatever `observe()` had just set up, and no pushed
+        // invalidation ever reached this store. The subscription outlives
+        // the household lifecycle; `refresh()` no-ops when householdId is
+        // nil, so a late invalidation is harmless.
         householdId = nil
         chores = []
         completions = []
@@ -38,24 +48,28 @@ final class ChoreStore: ObservableObject {
     }
 
     /// Replaces what the two Firestore snapshot listeners used to do. Called
-    /// on start and after every mutation; Phase 5 adds a WebSocket
-    /// invalidation signal that calls this on remote changes too.
+    /// on start, after every mutation, and whenever the server pushes an
+    /// invalidation for a collection this store owns.
     func refresh() {
+        Task { await refreshNow() }
+    }
+
+    /// The awaitable form, so a caller that must not finish before the fresh
+    /// data lands (see `complete`) can wait for it.
+    func refreshNow() async {
         guard householdId != nil else { return }
-        Task {
-            do {
-                async let chores = service.fetchChores()
-                // 60 days back is plenty of history for any realistic streak.
-                let since = Calendar.current.date(byAdding: .day, value: -60, to: Date()) ?? .distantPast
-                async let completions = service.fetchCompletions(since: since)
-                self.chores = try await chores
-                self.completions = try await completions
-            } catch {
-                // Same as RewardStore.refresh: background refetch failures
-                // are transient and self-correcting, so they don't get
-                // surfaced as user-facing errors.
-                print("ChoreStore refresh failed: \(error.localizedDescription)")
-            }
+        do {
+            async let chores = service.fetchChores()
+            // 60 days back is plenty of history for any realistic streak.
+            let since = Calendar.current.date(byAdding: .day, value: -60, to: Date()) ?? .distantPast
+            async let completions = service.fetchCompletions(since: since)
+            self.chores = try await chores
+            self.completions = try await completions
+        } catch {
+            // Same as RewardStore.refresh: background refetch failures
+            // are transient and self-correcting, so they don't get
+            // surfaced as user-facing errors.
+            print("ChoreStore refresh failed: \(error.localizedDescription)")
         }
     }
 
@@ -106,8 +120,16 @@ final class ChoreStore: ObservableObject {
         return streak
     }
 
+    /// True from the moment Complete is tapped until the refetch settles.
+    func isCompleting(_ chore: Chore) -> Bool {
+        guard let id = chore.id else { return false }
+        return pendingCompletions.contains(id)
+    }
+
     func complete(_ chore: Chore, assigneeName: String) {
         guard let choreId = chore.id else { return }
+        guard !pendingCompletions.contains(choreId) else { return }
+        pendingCompletions.insert(choreId)
         let completion = ChoreCompletion(
             choreId: choreId,
             choreTitle: chore.title,
@@ -116,7 +138,12 @@ final class ChoreStore: ObservableObject {
             completedByName: assigneeName,
             scheduledDate: ChoreService.dayString(Date())
         )
-        perform { try await self.service.recordCompletion(completion) }
+        perform(
+            { try await self.service.recordCompletion(completion) },
+            // Held until after the refetch, so the button never flickers back
+            // to tappable in the gap between the write and the fresh data.
+            always: { self.pendingCompletions.remove(choreId) }
+        )
     }
 
     func addChore(_ chore: Chore) {
@@ -134,14 +161,18 @@ final class ChoreStore: ObservableObject {
 
     /// Runs a mutation, then refetches — without a live listener, a write
     /// isn't visible until we read it back.
-    private func perform(_ work: @escaping () async throws -> Void) {
+    private func perform(
+        _ work: @escaping () async throws -> Void,
+        always cleanup: (() -> Void)? = nil
+    ) {
         Task {
             do {
                 try await work()
-                refresh()
+                await refreshNow()
             } catch {
                 errorMessage = error.localizedDescription
             }
+            cleanup?()
         }
     }
 }

@@ -107,7 +107,17 @@ export const handler: APIGatewayProxyHandler = async (event) => {
           // codes, then the household itself). Order matters: the household
           // doc is deleted last so a failure partway through still leaves a
           // household to retry against rather than orphaned children.
-          for (const prefix of ['COMPLETION#', 'REDEMPTION#', 'CHORE#', 'REWARD#', 'BALANCE#']) {
+          // COMPLETEDON# are the once-per-day markers from record-completion;
+          // they live under the household PK but outside the COMPLETION#
+          // range, so they need naming explicitly or they'd be orphaned.
+          for (const prefix of [
+            'COMPLETION#',
+            'COMPLETEDON#',
+            'REDEMPTION#',
+            'CHORE#',
+            'REWARD#',
+            'BALANCE#',
+          ]) {
             await batchDelete(await queryKeysByPrefix(householdId, prefix));
           }
 

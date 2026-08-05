@@ -48,8 +48,17 @@ struct ChoreService {
         try await api.send("DELETE", "chores/\(choreId)")
     }
 
+    /// Returns false if the server rejected the completion as already done
+    /// today (409) — a benign race, not an error worth showing: another tap
+    /// or another device got there first, and a refetch shows the truth.
     @MainActor
-    func recordCompletion(_ completion: ChoreCompletion) async throws {
-        try await api.send("POST", "completions", body: completion)
+    @discardableResult
+    func recordCompletion(_ completion: ChoreCompletion) async throws -> Bool {
+        do {
+            try await api.send("POST", "completions", body: completion)
+            return true
+        } catch let error as APIError where error.statusCode == 409 {
+            return false
+        }
     }
 }

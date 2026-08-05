@@ -16,4 +16,16 @@ export const Keys = {
   chore: (householdId: string, choreId: string) => ({ PK: `HOUSEHOLD#${householdId}`, SK: `CHORE#${choreId}` }),
   reward: (householdId: string, rewardId: string) => ({ PK: `HOUSEHOLD#${householdId}`, SK: `REWARD#${rewardId}` }),
   balance: (householdId: string, uid: string) => ({ PK: `HOUSEHOLD#${householdId}`, SK: `BALANCE#${uid}` }),
+  /**
+   * Enforces one completion per chore per day (see record-completion.ts).
+   *
+   * "COMPLETEDON#" deliberately sorts *before* "COMPLETION#" ('E' < 'I' at
+   * the 8th character), so these markers fall outside the
+   * `SK BETWEEN 'COMPLETION#...' AND 'COMPLETION#~'` range the completion
+   * queries use and never leak into results.
+   */
+  completionMarker: (householdId: string, choreId: string, scheduledDate: string) => ({
+    PK: `HOUSEHOLD#${householdId}`,
+    SK: `COMPLETEDON#${choreId}#${scheduledDate}`,
+  }),
 };

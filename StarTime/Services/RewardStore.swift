@@ -23,7 +23,9 @@ final class RewardStore: ObservableObject {
     }
 
     func stop() {
-        invalidationSubscription = nil
+        // See ChoreStore.stop(): the invalidation subscription deliberately
+        // survives, because `start()` calls `stop()` and clearing it here
+        // unsubscribed the store from every push.
         householdId = nil
         rewards = []
         redemptions = []
