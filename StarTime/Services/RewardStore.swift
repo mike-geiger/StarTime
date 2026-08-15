@@ -73,6 +73,20 @@ final class RewardStore: ObservableObject {
             .sorted { ($0.redeemedAt ?? .distantPast) > ($1.redeemedAt ?? .distantPast) }
     }
 
+    /// Everything in the household still waiting on a parent, longest wait
+    /// first -- the opposite order from the histories above, because this is
+    /// a work queue rather than a log.
+    ///
+    /// Derived rather than fetched: the redemptions are already here, and a
+    /// second request would be a second thing that can be stale.
+    var pendingRedemptions: [Redemption] {
+        redemptions
+            .filter { $0.status == .pending }
+            .sorted { ($0.redeemedAt ?? .distantPast) < ($1.redeemedAt ?? .distantPast) }
+    }
+
+    var pendingCount: Int { pendingRedemptions.count }
+
     /// No local balance pre-check any more: the server's conditional
     /// transaction is the only thing that can decide affordability without
     /// racing. `canAfford` in the UI still gates the button for a sensible
@@ -80,6 +94,29 @@ final class RewardStore: ObservableObject {
     func redeem(_ reward: Reward, forUID uid: String, name: String) {
         guard let rewardId = reward.id else { return }
         perform { try await self.service.redeem(rewardId: rewardId, redeemedByUID: uid, redeemedByName: name) }
+    }
+
+    /// The three fulfillment transitions. Which ones are legal from a given
+    /// state is the server's call -- an illegal or already-applied one comes
+    /// back 409 and surfaces through `errorMessage` like any other
+    /// user-initiated failure.
+    func fulfill(_ redemption: Redemption) {
+        updateStatus(of: redemption, to: .fulfilled)
+    }
+
+    func unfulfill(_ redemption: Redemption) {
+        updateStatus(of: redemption, to: .pending)
+    }
+
+    func cancel(_ redemption: Redemption) {
+        updateStatus(of: redemption, to: .cancelled)
+    }
+
+    private func updateStatus(of redemption: Redemption, to status: RedemptionStatus) {
+        guard let redemptionId = redemption.id else { return }
+        perform {
+            try await self.service.updateRedemptionStatus(redemptionId: redemptionId, status: status)
+        }
     }
 
     func addReward(_ reward: Reward) {

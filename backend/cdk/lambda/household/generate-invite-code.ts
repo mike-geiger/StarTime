@@ -1,7 +1,7 @@
 import type { APIGatewayProxyHandler } from 'aws-lambda';
-import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLE_NAME, Keys } from '../common/dynamo';
-import { callerUid, callerHouseholdId, HttpError } from '../common/auth';
+import { callerUid, callerHouseholdId, requireParent, HttpError } from '../common/auth';
 import { json, errorResponse } from '../common/http';
 
 // Same alphabet as the old client-side generator: no 0/O/1/I, since codes
@@ -31,12 +31,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     // SettingsView hiding the buttons for children -- now it's a real
     // server-side check, which is the whole point of moving authorization
     // out of console-only security rules and into version-controlled code.
-    const householdResult = await ddb.send(
-      new GetCommand({ TableName: TABLE_NAME, Key: Keys.household(householdId) })
-    );
-    if (householdResult.Item?.members?.[uid]?.role !== 'parent') {
-      throw new HttpError(403, 'Only parents can generate invite codes');
-    }
+    await requireParent(householdId, uid, 'Only parents can generate invite codes');
 
     // The old client-side generator never checked for collisions. A
     // conditional Put makes a collision a retry instead of silently

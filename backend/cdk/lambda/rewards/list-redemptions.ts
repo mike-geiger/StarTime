@@ -1,35 +1,19 @@
 import type { APIGatewayProxyHandler } from 'aws-lambda';
-import { QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { ddb, TABLE_NAME } from '../common/dynamo';
 import { callerUid, callerHouseholdId } from '../common/auth';
 import { json, errorResponse } from '../common/http';
+import { queryRedemptions, presentRedemption } from './redemptions';
 
+/**
+ * The one place a missing fulfillment state gets its default (see
+ * presentRedemption). Normalizing on read rather than backfilling the table
+ * means no client ever has to know that status-less rows exist, and no
+ * mutating script has to run against real family data.
+ */
 export const handler: APIGatewayProxyHandler = async (event) => {
   try {
     const householdId = await callerHouseholdId(callerUid(event));
-
-    const items = [];
-    let lastEvaluatedKey: Record<string, unknown> | undefined;
-
-    do {
-      const result = await ddb.send(
-        new QueryCommand({
-          TableName: TABLE_NAME,
-          // See list-completions.ts for why this needs an explicit upper bound.
-          KeyConditionExpression: 'PK = :pk AND SK BETWEEN :lo AND :hi',
-          ExpressionAttributeValues: {
-            ':pk': `HOUSEHOLD#${householdId}`,
-            ':lo': 'REDEMPTION#',
-            ':hi': 'REDEMPTION#~',
-          },
-          ExclusiveStartKey: lastEvaluatedKey,
-        })
-      );
-      items.push(...(result.Items ?? []));
-      lastEvaluatedKey = result.LastEvaluatedKey;
-    } while (lastEvaluatedKey);
-
-    return json(200, { redemptions: items });
+    const items = await queryRedemptions(householdId);
+    return json(200, { redemptions: items.map(presentRedemption) });
   } catch (error) {
     return errorResponse(error);
   }

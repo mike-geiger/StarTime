@@ -2,10 +2,14 @@ import Foundation
 
 enum RewardServiceError: LocalizedError {
     case insufficientBalance(String)
+    case parentOnly(String)
+    case alreadyResolved(String)
 
     var errorDescription: String? {
         switch self {
-        case .insufficientBalance(let message):
+        case .insufficientBalance(let message),
+             .parentOnly(let message),
+             .alreadyResolved(let message):
             return message
         }
     }
@@ -68,6 +72,28 @@ struct RewardService {
             // old client-side check couldn't catch.
             throw RewardServiceError.insufficientBalance(
                 error.message ?? "That's more points than you have saved up."
+            )
+        }
+    }
+
+    /// Moves a redemption along its fulfillment lifecycle. The server decides
+    /// which transitions are legal from the redemption's current state, so
+    /// this just names the destination.
+    @MainActor
+    func updateRedemptionStatus(redemptionId: String, status: RedemptionStatus) async throws {
+        struct Body: Encodable { let status: RedemptionStatus }
+        do {
+            try await api.send("PATCH", "redemptions/\(redemptionId)", body: Body(status: status))
+        } catch let error as APIError where error.statusCode == 403 {
+            throw RewardServiceError.parentOnly(
+                error.message ?? "Only a parent can update a redemption."
+            )
+        } catch let error as APIError where error.statusCode == 409 {
+            // Someone else resolved it first, or this transition isn't legal
+            // from where the redemption actually is now. The server's message
+            // names the current state, which is the useful part.
+            throw RewardServiceError.alreadyResolved(
+                error.message ?? "That request was already handled on another device."
             )
         }
     }

@@ -14,6 +14,9 @@ struct MainTabView: View {
     @StateObject private var choreStore = ChoreStore()
     @StateObject private var rewardStore = RewardStore()
     @StateObject private var realtime = RealtimeConnectionManager()
+    @StateObject private var pendingNotifier = PendingRedemptionNotifier()
+
+    private var isParent: Bool { householdStore.profile?.role == .parent }
 
     var body: some View {
         TabView {
@@ -22,6 +25,10 @@ struct MainTabView: View {
 
             RewardsView()
                 .tabItem { Label("Rewards", systemImage: "star.fill") }
+                // How a parent learns something is waiting without opening
+                // the tab. `.badge(0)` renders nothing, so children -- who
+                // have no queue -- simply never see one.
+                .badge(isParent ? rewardStore.pendingCount : 0)
 
             ProgressTabView()
                 .tabItem { Label("Progress", systemImage: "chart.bar.fill") }
@@ -37,6 +44,11 @@ struct MainTabView: View {
             // the initial fetch should still trigger a refetch.
             choreStore.observe(realtime)
             rewardStore.observe(realtime)
+            // Subscribes before the first fetch for the same reason the
+            // stores do: a queue that filled up while we were signed out
+            // should still be announced. Strictly a reader of the store --
+            // see PendingRedemptionNotifier on why it must never refetch.
+            pendingNotifier.start(store: rewardStore, householdId: householdId, isParent: isParent)
             choreStore.start(householdId: householdId)
             rewardStore.start(householdId: householdId)
             if let idToken = auth.idToken {
@@ -63,7 +75,15 @@ struct MainTabView: View {
                 break
             }
         }
-        .onDisappear { realtime.stop() }
+        .onChange(of: isParent) { _, parent in
+            pendingNotifier.setIsParent(parent)
+        }
+        .onDisappear {
+            realtime.stop()
+            // Signing out: drop the badge and forget what this device
+            // announced, so the next family on this device starts clean.
+            pendingNotifier.stop()
+        }
     }
 }
 

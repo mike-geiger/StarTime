@@ -154,6 +154,11 @@ check('reward name', rewards?.rewards?.[0]?.name, 'Ice cream');
 
 const redemptions = await api('GET', 'redemptions');
 check('redemption points', redemptions?.redemptions?.[0]?.pointsSpent, 4);
+// The seeded row carries no `status` -- the pre-fulfillment-tracking shape.
+// Every such redemption was complete the moment it was made, so it has to
+// read back as fulfilled or migrated families would open the app to a queue
+// of obligations they already met.
+check('status-less redemption reads as fulfilled', redemptions?.redemptions?.[0]?.status, 'fulfilled');
 
 const balances = await api('GET', 'balances');
 check('migrated balance', balances?.balances?.[uid], 6);

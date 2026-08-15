@@ -31,3 +31,29 @@ export async function callerHouseholdId(uid: string): Promise<string> {
   }
   return householdId;
 }
+
+/**
+ * Throws 403 unless the caller holds the parent role in the given household.
+ *
+ * The household's own member map is the authority here, not the copy of
+ * `role` on the user profile item -- the profile's is a per-user convenience
+ * denormalization, while the member map is the household's record of who its
+ * parents are. Callers pass a householdId they derived from
+ * `callerHouseholdId`, so this never widens what the caller could reach.
+ */
+export async function requireParent(
+  householdId: string,
+  uid: string,
+  message: string
+): Promise<{ name: string; role: string }> {
+  const result = await ddb.send(
+    new GetCommand({ TableName: TABLE_NAME, Key: Keys.household(householdId) })
+  );
+  const member = result.Item?.members?.[uid];
+  if (member?.role !== 'parent') {
+    throw new HttpError(403, message);
+  }
+  // Returned so callers that need to attribute an action to this parent
+  // don't have to read the household a second time.
+  return member;
+}

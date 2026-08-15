@@ -7,6 +7,10 @@ struct RewardsView: View {
 
     @State private var showingAddReward = false
     @State private var editingReward: Reward?
+    /// Cancelling returns points, so it asks first. Holding the redemption
+    /// itself (rather than a bool) keeps the confirmation bound to the row
+    /// that was swiped even if the list reorders underneath it.
+    @State private var redemptionPendingCancellation: Redemption?
 
     private var isParent: Bool { householdStore.profile?.role == .parent }
 
@@ -14,6 +18,8 @@ struct RewardsView: View {
         NavigationStack {
             List {
                 if isParent {
+                    pendingQueueSection
+
                     ForEach(childMembers, id: \.uid) { child in
                         Section {
                             if rewardStore.rewards.isEmpty {
@@ -36,6 +42,8 @@ struct RewardsView: View {
                         Text("Invite a child from Settings to start earning points.")
                             .foregroundStyle(.secondary)
                     }
+
+                    resolvedHistorySection
                 } else if let myUID = auth.user?.uid {
                     Section {
                         HStack {
@@ -63,7 +71,14 @@ struct RewardsView: View {
                         Section("Redeemed") {
                             ForEach(myRedemptions) { redemption in
                                 HStack {
-                                    Text(redemption.rewardName)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(redemption.rewardName)
+                                        // Without this a request a parent
+                                        // hasn't acted on yet is
+                                        // indistinguishable from a reward
+                                        // already in hand.
+                                        statusPill(redemption.status)
+                                    }
                                     Spacer()
                                     Text("-\(redemption.pointsSpent)")
                                         .foregroundStyle(.secondary)
@@ -103,6 +118,126 @@ struct RewardsView: View {
             Button("OK", role: .cancel) { rewardStore.errorMessage = nil }
         } message: {
             Text(rewardStore.errorMessage ?? "")
+        }
+        .confirmationDialog(
+            "Cancel this request?",
+            isPresented: Binding(
+                get: { redemptionPendingCancellation != nil },
+                set: { if !$0 { redemptionPendingCancellation = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: redemptionPendingCancellation
+        ) { redemption in
+            Button("Cancel and return \(redemption.pointsSpent) points", role: .destructive) {
+                rewardStore.cancel(redemption)
+                redemptionPendingCancellation = nil
+            }
+            Button("Keep it", role: .cancel) { redemptionPendingCancellation = nil }
+        } message: { redemption in
+            Text("\(redemption.redeemedByName) will get their \(redemption.pointsSpent) points back.")
+        }
+    }
+
+    // MARK: - Parent sections
+
+    /// The whole point of the queue: requests that are waiting on this parent,
+    /// ahead of everything else on the screen. Absent entirely when empty --
+    /// an empty work queue is not worth a row.
+    @ViewBuilder
+    private var pendingQueueSection: some View {
+        let pending = rewardStore.pendingRedemptions
+        if !pending.isEmpty {
+            Section {
+                ForEach(pending) { redemption in
+                    pendingRow(redemption)
+                }
+            } header: {
+                Label("Waiting on you", systemImage: "clock.badge.exclamationmark")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pendingRow(_ redemption: Redemption) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(redemption.redeemedByName) wants \(redemption.rewardName)")
+                HStack(spacing: 6) {
+                    Text("\(redemption.pointsSpent) pts")
+                    if let redeemedAt = redemption.redeemedAt {
+                        Text("·")
+                        Text(redeemedAt, format: .relative(presentation: .named))
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button("Fulfilled") { rewardStore.fulfill(redemption) }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("fulfillRedemptionButton-\(redemption.id ?? "")")
+        }
+        .accessibilityIdentifier("pendingRedemptionRow-\(redemption.id ?? "")")
+        .swipeActions {
+            Button("Cancel", role: .destructive) {
+                redemptionPendingCancellation = redemption
+            }
+            .accessibilityIdentifier("cancelRedemptionButton-\(redemption.id ?? "")")
+        }
+    }
+
+    /// Fulfilled and cancelled requests. Exists so a parent who tapped
+    /// "Fulfilled" by mistake has something to swipe on -- reverting is the
+    /// only way back, since cancelling a fulfilled redemption is refused.
+    @ViewBuilder
+    private var resolvedHistorySection: some View {
+        let resolved = rewardStore.redemptions
+            .filter { $0.status != .pending }
+            .sorted { ($0.redeemedAt ?? .distantPast) > ($1.redeemedAt ?? .distantPast) }
+
+        if !resolved.isEmpty {
+            Section("History") {
+                ForEach(resolved) { redemption in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(redemption.redeemedByName) — \(redemption.rewardName)")
+                            statusPill(redemption.status)
+                        }
+                        Spacer()
+                        Text("-\(redemption.pointsSpent)")
+                            .foregroundStyle(.secondary)
+                    }
+                    .swipeActions {
+                        if redemption.status == .fulfilled {
+                            Button("Un-fulfill") { rewardStore.unfulfill(redemption) }
+                                .tint(.orange)
+                                .accessibilityIdentifier("unfulfillRedemptionButton-\(redemption.id ?? "")")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Shared pieces
+
+    @ViewBuilder
+    private func statusPill(_ status: RedemptionStatus) -> some View {
+        switch status {
+        case .pending:
+            Label("Waiting on a parent", systemImage: "clock")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .fulfilled:
+            Label("Received", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .cancelled:
+            Label("Cancelled — points returned", systemImage: "arrow.uturn.backward")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

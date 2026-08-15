@@ -47,6 +47,12 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       redeemedByUID,
       redeemedByName,
       redeemedAt,
+      // Redeeming spends the points but doesn't deliver the reward -- a
+      // parent hands that over later and marks it fulfilled. Debiting here
+      // rather than at fulfillment is deliberate: it keeps the conditional
+      // decrement below as the single thing that decides affordability, and
+      // stops a member queueing up more requests than they can pay for.
+      status: 'pending' as const,
     };
 
     try {

@@ -385,6 +385,235 @@ final class StarTimeUITests: XCTestCase {
         deleteCurrentAccount(app: app)
     }
 
+    /// A redemption now waits on a parent to hand the reward over, so the
+    /// parent's Rewards screen leads with a queue of what's outstanding.
+    @MainActor
+    func testStage6ParentFulfillsAQueuedRedemption() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithPendingRedemption(app: app, prefix: "fulfil6")
+
+        // --- The request is waiting on the parent, and says so from the tab bar ---
+        let pendingRow = queuedRequest(app)
+        XCTAssertTrue(pendingRow.waitForExistence(timeout: 15), "Redeeming should leave a request waiting on the parent, naming who asked for what")
+        XCTAssertTrue(app.staticTexts["Waiting on you"].exists, "The queue should lead the parent's screen")
+
+        let rewardsTab = app.tabBars.buttons["Rewards"]
+        let badged = NSPredicate(format: "label CONTAINS '1' OR value CONTAINS '1'")
+        let tabShowsCount = XCTNSPredicateExpectation(predicate: badged, object: rewardsTab)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [tabShowsCount], timeout: 10), .completed,
+            "The Rewards tab should badge the one pending request"
+        )
+        add(XCTAttachment(screenshot: app.screenshot()))
+
+        // --- Handing it over clears it from the queue ---
+        let fulfillButton = app.buttons["Fulfilled"].firstMatch
+        XCTAssertTrue(fulfillButton.waitForExistence(timeout: 5))
+        fulfillButton.tap()
+
+        let leftTheQueue = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: pendingRow)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [leftTheQueue], timeout: 15), .completed,
+            "A fulfilled request should leave the parent's queue"
+        )
+        XCTAssertTrue(app.staticTexts["Received"].waitForExistence(timeout: 10), "It should show as received in history")
+
+        // Fulfilling moves no points -- they were spent when it was redeemed.
+        XCTAssertFalse(app.buttons["Redeem"].firstMatch.isEnabled, "Fulfilling must not give the points back")
+
+        // Un-fulfil is the way back from a mistaken tap, and the only route
+        // to cancelling something already marked fulfilled.
+        let historyRow = app.staticTexts["Kiddo — Ice cream"].firstMatch
+        XCTAssertTrue(historyRow.waitForExistence(timeout: 5))
+        historyRow.swipeLeft()
+        let unfulfillButton = app.buttons["Un-fulfill"].firstMatch
+        XCTAssertTrue(unfulfillButton.waitForExistence(timeout: 5), "A fulfilled request should offer Un-fulfill")
+        unfulfillButton.tap()
+
+        XCTAssertTrue(queuedRequest(app).waitForExistence(timeout: 15), "Un-fulfilling should put it back in the queue")
+        XCTAssertFalse(app.buttons["Redeem"].firstMatch.isEnabled, "Un-fulfilling must not move points either")
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Cancelling is the only path that returns points, so this checks the
+    /// refund actually lands rather than just that the row disappeared.
+    @MainActor
+    func testStage6ParentCancelsAQueuedRedemptionAndPointsComeBack() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithPendingRedemption(app: app, prefix: "cancel6")
+
+        let pendingRow = queuedRequest(app)
+        XCTAssertTrue(pendingRow.waitForExistence(timeout: 15), "Redeeming should leave a request waiting on the parent")
+
+        // Spending the 5 points left Kiddo unable to afford the 5-point
+        // reward -- which is what makes the refund visible below.
+        let redeemButton = app.buttons["Redeem"].firstMatch
+        XCTAssertTrue(redeemButton.waitForExistence(timeout: 10))
+        XCTAssertFalse(redeemButton.isEnabled, "Kiddo should be broke after redeeming")
+
+        pendingRow.swipeLeft()
+        let cancelButton = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Swiping a queued request should reveal Cancel")
+        cancelButton.tap()
+
+        // Returning points asks first.
+        let confirm = app.buttons["Cancel and return 5 points"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Cancelling should confirm before returning points")
+        confirm.tap()
+
+        let leftTheQueue = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: pendingRow)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [leftTheQueue], timeout: 15), .completed,
+            "A cancelled request should leave the parent's queue"
+        )
+
+        // The refund, seen on screen: Kiddo can afford the reward again.
+        let affordableAgain = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: redeemButton)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [affordableAgain], timeout: 15), .completed,
+            "Cancelling should return the points, re-enabling Redeem"
+        )
+        XCTAssertTrue(app.staticTexts["Cancelled — points returned"].exists, "The cancelled entry should stay in history, labelled")
+        XCTAssertFalse(app.staticTexts["Waiting on you"].exists, "With nothing pending, the queue should not be shown at all")
+        add(XCTAttachment(screenshot: app.screenshot()))
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// The queued request, found by the text it renders rather than by the
+    /// row's accessibility identifier.
+    ///
+    /// `pendingRedemptionRow-<id>` is set on the row's HStack and is the
+    /// right handle in principle, but SwiftUI doesn't reliably surface an
+    /// identifier placed on a `List` row's container as a queryable element
+    /// — `app.otherElements` found nothing, which is what failed the first
+    /// run of these two tests. A plain `Text` is always exposed, and swiping
+    /// it triggers the row's swipe actions just the same.
+    private func queuedRequest(_ app: XCUIApplication) -> XCUIElement {
+        app.staticTexts["Kiddo wants Ice cream"].firstMatch
+    }
+
+    /// The notification permission alert is a SpringBoard alert that would
+    /// appear the moment a parent's queue first fills, swallowing whatever
+    /// tap came next. Suppressing just the prompt keeps the queue, the
+    /// badges, and every assertion here intact.
+    private func makeApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["STARTIME_SUPPRESS_NOTIFICATION_PROMPT"] = "1"
+        return app
+    }
+
+    /// Leaves the app signed in as a parent, on the Rewards tab, with exactly
+    /// one pending redemption: Kiddo has earned 5 points from a chore and
+    /// spent all of them on a 5-point reward.
+    private func setUpParentWithPendingRedemption(
+        app: XCUIApplication,
+        prefix: String
+    ) -> (parentEmail: String, childEmail: String, password: String) {
+        resetToSignedOutState(app: app)
+
+        let runId = Int(Date().timeIntervalSince1970)
+        let parentEmail = "parent-\(prefix)-\(runId)@example.com"
+        let childEmail = "child-\(prefix)-\(runId)@example.com"
+        let password = "TestPassword123!"
+
+        signUp(app: app, email: parentEmail, password: password)
+
+        let createHouseholdButton = app.buttons["Create a household"]
+        XCTAssertTrue(createHouseholdButton.waitForExistence(timeout: 15))
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+        createHouseholdButton.tap()
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 5))
+        app.textFields["Your name"].tap()
+        app.textFields["Your name"].typeText("Dad")
+        app.textFields["Household name (e.g. \"The Geigers\")"].tap()
+        app.textFields["Household name (e.g. \"The Geigers\")"].typeText("The Geigers")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Chores"].waitForExistence(timeout: 15))
+        tapTab(app, "Settings")
+
+        app.buttons["Invite a child"].tap()
+        let codeText = app.staticTexts.matching(identifier: "generatedInviteCode").firstMatch
+        XCTAssertTrue(codeText.waitForExistence(timeout: 10))
+        let inviteCode = codeText.label
+
+        app.buttons["Sign Out"].tap()
+
+        signUp(app: app, email: childEmail, password: password)
+
+        let joinButton = app.buttons["Join with an invite code"]
+        XCTAssertTrue(joinButton.waitForExistence(timeout: 15))
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+        joinButton.tap()
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 5))
+        app.textFields["Your name"].tap()
+        app.textFields["Your name"].typeText("Kiddo")
+        app.textFields["Invite code"].tap()
+        app.textFields["Invite code"].typeText(inviteCode)
+        app.buttons["Join"].tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Chores"].waitForExistence(timeout: 15))
+        resetToSignedOutState(app: app)
+
+        signIn(app: app, email: parentEmail, password: password)
+        tapTab(app, "Chores")
+
+        tapAddButton(app: app)
+        XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5))
+        app.textFields["Title"].tap()
+        app.textFields["Title"].typeText("Make bed")
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.staticTexts["Make bed"].waitForExistence(timeout: 10))
+        let completeButton = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'completeChoreButton-'"))
+            .firstMatch
+        XCTAssertTrue(completeButton.waitForExistence(timeout: 5))
+        completeButton.tap()
+
+        tapTab(app, "Rewards")
+        tapAddButton(app: app)
+
+        XCTAssertTrue(app.textFields["Name"].waitForExistence(timeout: 5))
+        app.textFields["Name"].tap()
+        app.textFields["Name"].typeText("Ice cream")
+        let decrementButton = app.steppers.firstMatch.buttons["Decrement"]
+        XCTAssertTrue(decrementButton.waitForExistence(timeout: 5))
+        for _ in 0..<3 { decrementButton.tap() } // 20 -> 5 in steps of 5
+        app.buttons["Save"].tap()
+
+        let redeemButton = app.buttons["Redeem"].firstMatch
+        XCTAssertTrue(redeemButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(redeemButton.isEnabled, "Kiddo should be able to afford the reward after the chore")
+        redeemButton.tap()
+
+        return (parentEmail, childEmail, password)
+    }
+
+    /// Same ordering as the other multi-account tests: the child first, which
+    /// only drops them from the household, then the parent, who as the last
+    /// member cascades the household away.
+    private func tearDownAccounts(
+        app: XCUIApplication,
+        accounts: (parentEmail: String, childEmail: String, password: String)
+    ) {
+        resetToSignedOutState(app: app)
+        signIn(app: app, email: accounts.childEmail, password: accounts.password)
+        deleteCurrentAccount(app: app)
+        signIn(app: app, email: accounts.parentEmail, password: accounts.password)
+        deleteCurrentAccount(app: app)
+    }
+
     /// Opens the add-chore/add-reward sheet, retrying the tap (same stale
     /// hit-point issue as tab bar taps) until the sheet's Cancel button
     /// actually appears, rather than trusting a single tap succeeded.

@@ -137,6 +137,14 @@ export class ApiStack extends Stack {
       new LambdaIntegration(lambda('RedeemReward', '../lambda/rewards/redeem-reward.ts')),
       authed
     );
+    // Fulfillment lifecycle. Parent-only, enforced inside the handler.
+    redemptions.addResource('{redemptionId}').addMethod(
+      'PATCH',
+      new LambdaIntegration(
+        lambda('UpdateRedemptionStatus', '../lambda/rewards/update-redemption-status.ts')
+      ),
+      authed
+    );
 
     this.api.root.addResource('balances').addMethod(
       'GET',

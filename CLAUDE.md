@@ -51,6 +51,8 @@ Some behavior can't be tested through XCUITest at all, because the suite drives 
 - `verify-duplicate-guard.mjs` — fires 5 identical completions concurrently, asserts exactly one 201 and four 409s.
 - `verify-migration-shape.mjs` — writes items straight into DynamoDB, bypassing every handler, then reads them back through the API. Catches what the UI tests can't: they only read back what the handlers themselves wrote, so a sort key outside a query's range or a missing GSI attribute would pass unnoticed. Relevant to anything that writes to the table out-of-band (backfill, repair, restore).
 
+- `verify-redemption-lifecycle.mjs` — drives a redemption through its fulfillment states using **two** identities, a parent and a child. Asserts the child's token is 403 on every transition, that five concurrent cancels refund exactly once, and that a status-less legacy row reads as fulfilled.
+
 They live under `backend/cdk/` because ESM resolves imports relative to the file, and `node_modules` is there.
 
 ### Cost/latency note
@@ -78,13 +80,13 @@ Each feature area (household, chores, rewards) follows the same layering:
 
 `APIClient` (`StarTime/Services/APIClient.swift`) is a `@MainActor` singleton: URLSession, bearer-token auth, typed decode, and a single 401-refresh-retry. Its `tokenProvider` is wired in `AuthService.init()` — **not** from the App body, because a `.task`-based assignment races the first request.
 
-Composition root: `StarTimeApp.swift` (owns `AuthService`) → `ContentView.swift` (auth/onboarding gate) → `MainTabView.swift` (owns the **shared** `ChoreStore`, `RewardStore`, and `RealtimeConnectionManager`).
+Composition root: `StarTimeApp.swift` (owns `AuthService`) → `ContentView.swift` (auth/onboarding gate) → `MainTabView.swift` (owns the **shared** `ChoreStore`, `RewardStore`, `RealtimeConnectionManager`, and `PendingRedemptionNotifier`).
 
 ### Conventions that are load-bearing
 
 - **Stores are shared, not per-view.** `ChoreStore`/`RewardStore` are `@StateObject`s on `MainTabView`, injected downward. They used to be per-view, which Firestore's snapshot listeners silently compensated for by pushing every write to every instance. With fetch-based stores, a write through one instance is invisible to the others — sharing is a correctness requirement now.
 - **`observe(_:)` subscriptions must not be torn down by `stop()`.** `start()` calls `stop()` internally, so clearing the subscription there unsubscribes the store from all realtime pushes — a bug that made the entire realtime layer silently dead while the backend looked healthy. `refresh()` no-ops without a household, so a late invalidation is harmless.
-- **Never refetch in response to a `@Published` change of a store the view observes.** `RewardsView.onAppear { refresh() }` fed back into `MainTabView`'s re-render, which re-fired `onAppear`; the app never went idle and XCUITest stalled for 900+ seconds per tap. Cross-store updates travel via realtime invalidation instead.
+- **Never refetch in response to a `@Published` change of a store the view observes.** `RewardsView.onAppear { refresh() }` fed back into `MainTabView`'s re-render, which re-fired `onAppear`; the app never went idle and XCUITest stalled for 900+ seconds per tap. Cross-store updates travel via realtime invalidation instead. `PendingRedemptionNotifier` subscribes to `RewardStore.$redemptions` and is bound by the same rule — it reads and posts, never refetches, and deliberately declares no `@Published` state so it can't re-render the view that owns the stores.
 - **`ChoreService.dayString(_:)` is the canonical `scheduledDate` formatter.** Completions are matched by exact string equality on it (streaks, once-per-day). Never format that date ad hoc.
 - **Background refetch failures are not user-facing.** Only user-initiated actions populate `errorMessage`; a transient failure raised as a modal alert blocks UI interaction (including XCUITest taps).
 
@@ -120,6 +122,9 @@ Completion marker       PK=HOUSEHOLD#{id}      SK=COMPLETEDON#{choreId}#{schedul
 Invite code             PK=INVITECODE#{code}   SK=METADATA   GSI1PK=HOUSEHOLD#{id}  GSI1SK=INVITECODE#{code}
 ```
 
+- **A redemption carries its fulfillment state as attributes on that same item**: `status` (`pending`/`fulfilled`/`cancelled`), plus `fulfilledAt`/`fulfilledByUID`/`fulfilledByName` and `cancelledAt`/`cancelledByUID`. No new item shape and no index — the parent's queue is the redemption range filtered to `pending`.
+- **A missing `status` means `fulfilled`, and that default lives in exactly one place**: `presentRedemption` in `lambda/rewards/redemptions.ts`, applied on read. Every redemption predating fulfillment tracking was complete when it was made, so defaulting them to pending would hand existing families a queue of obligations they'd already met. There's no backfill; the write path tolerates the absent attribute via `attribute_not_exists(#status) OR #status = :fulfilled` on the un-fulfil transition only.
+- **A redemption can't be point-read by id** — its sort key is `REDEMPTION#{redeemedAtISO}#{id}`, so `findRedemptionById` range-queries and matches on the `id` attribute. Scoping that query to the caller's own household is what makes another household's redemption a 404 rather than a leak.
 - **Range queries need an explicit upper bound.** Completions/redemptions use `SK BETWEEN 'COMPLETION#{since}' AND 'COMPLETION#~'`. A bare `SK > :since` also matches `METADATA`/`REWARD#`/etc. under the same PK.
 - **`COMPLETEDON#` sorts before `COMPLETION#`** (`'E' < 'I'`), so markers fall outside the completion range and never leak into results. They *are* invisible to `begins_with('COMPLETION#')` too — cascade delete names them explicitly.
 - **GSI1 exists for one query**: finding a household's invite codes during cascade delete.
@@ -129,6 +134,8 @@ Invite code             PK=INVITECODE#{code}   SK=METADATA   GSI1PK=HOUSEHOLD#{i
 Firestore's console-only security rules are gone; **authorization now lives in version-controlled Lambda code**. Every handler derives the caller's identity from `custom:legacy_uid` in the authorizer-validated token claims (`common/auth.ts`) and re-derives their `householdId` server-side. **Never trust a client-supplied uid or householdId.**
 
 **`custom:legacy_uid`, not Cognito's `sub`, is the canonical app-level user id.** Set by the `PostConfirmation` trigger at sign-up, for every account. The name is historical — `sub` is regenerated per user pool, so data keyed on it could never have survived the provider change; a separate stable id is what let existing households stay reachable.
+
+**`requireParent(householdId, uid, message)` in `common/auth.ts` is the parent-role check**, used by `generate-invite-code.ts` and `update-redemption-status.ts`. It reads the household `METADATA` item's member map, not the `role` copy on the user profile — the profile's is a per-user denormalization; the member map is the household's own record. It returns the member so a caller can attribute an action without a second read.
 
 **The App Client uses `USER_PASSWORD_AUTH`, not SRP, and that's load-bearing.** `AuthService.signIn` calls `InitiateAuth` with `.userPasswordAuth`, and aws-sdk-swift ships no SRP implementation (it's in Amplify, which this app doesn't use). Enabling SRP and disabling this breaks sign-in. It was originally chosen so the since-removed migration trigger could verify plaintext passwords against Firebase, but the client now depends on it independently.
 
@@ -145,12 +152,15 @@ DynamoDB Streams → fan-out Lambda → WebSocket push of a **lightweight invali
 - **Balances are a denormalized counter**, updated in the same `TransactWriteItems` as the completion/redemption that justifies them. They must never drift from the ledger.
 - **Redemption is atomic**: the balance decrement carries `ConditionExpression: balance >= :cost`, so the write itself enforces sufficiency. The old client-side pre-check could be beaten by two concurrent redemptions.
 - **One completion per chore per day** is enforced by a conditional `Put` of the `COMPLETEDON#` marker in the same transaction. A completion's own sort key carries a timestamp and uuid and can never collide, so it can't be the constraint. `verify-duplicate-guard.mjs` proves this under concurrency.
+- **`pending → cancelled` is the only path that returns points**, and the refund rides in the same `TransactWriteItems` as the status change, conditioned on `status = 'pending'`. That condition is the only thing between one cancel and a double refund. `fulfilled → cancelled` is deliberately refused (un-fulfil first) so a second refund path never has to exist, and the amount comes from the redemption's own `pointsSpent` — never re-read from the reward, which may have been repriced or deleted. `verify-redemption-lifecycle.mjs` proves this under concurrency.
+- **`PATCH /redemptions/{redemptionId}` carries a target state, not a verb.** Each of the three legal targets has exactly one legal origin, which the `ConditionExpression` names — so the locating read can't be raced, and `cancelled` is terminal for free because no transition names it as an origin. Fulfil/un-fulfil use `ReturnValues: ALL_NEW`, and cancel re-reads with `ConsistentRead`: a default Query right after a write can return the pre-write item.
 - **Cascade delete ordering**: `DELETE /account` removes completions, markers, redemptions, chores, rewards, balances, invite codes (via GSI1), then the household — household last, so a partial failure leaves something to retry against rather than orphans. The client only deletes the Cognito user *after* this returns 2xx. Don't reorder; that caused a real orphaned-household bug (`testStage5AccountDeletionActuallyDeletesHouseholdData`).
 - **`BatchWriteItem` caps at 25 items** (vs Firestore's 500), and can return `UnprocessedItems` on an otherwise-successful call. Both need explicit loops.
 
 ## UI test conventions (`StarTimeUITests.swift`)
 
-- Views expose stable accessibility identifiers for anything a label query can't uniquely target (`generatedInviteCode`, `completeChoreButton-<choreId>`, `deleteAccountRowButton`).
+- Views expose stable accessibility identifiers for anything a label query can't uniquely target (`generatedInviteCode`, `completeChoreButton-<choreId>`, `deleteAccountRowButton`, `pendingRedemptionRow-<id>`, `fulfillRedemptionButton-<id>`, `cancelRedemptionButton-<id>`, `unfulfillRedemptionButton-<id>`).
+- **Tests that produce a pending redemption must launch via `makeApp()`**, which sets `STARTIME_SUPPRESS_NOTIFICATION_PROMPT=1`. `PendingRedemptionNotifier` asks for notification permission the first time a parent's queue fills; that SpringBoard alert would otherwise appear mid-suite and swallow the next tap. Only the prompt is suppressed — the queue and both badges still work, so nothing under test is stubbed out.
 - Tab bar and sheet-opening taps use retry loops (`tapTab`, `tapAddButton`): a tap right after a screen transition can compute a stale hit point mid-animation and silently miss.
 - Every test that creates accounts cleans them up via `deleteCurrentAccount`, including on failure paths.
 - **A "Timed out while synthesizing event" failure usually means the app never went idle**, not that the element is missing — look for a repeating refetch loop or an indeterminate `ProgressView`, not a selector problem.
