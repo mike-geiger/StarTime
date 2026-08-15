@@ -8,10 +8,9 @@ import { RealtimeStack } from '../lib/realtime-stack';
 
 const app = new App();
 const stage = (app.node.tryGetContext('stage') as string | undefined) ?? 'dev';
-const firebaseWebApiKey = app.node.tryGetContext('firebaseWebApiKey') as string | undefined;
 
 new HealthStack(app, `StarTime-Health-${stage}`, { stage });
-const auth = new AuthStack(app, `StarTime-Auth-${stage}`, { stage, firebaseWebApiKey });
+const auth = new AuthStack(app, `StarTime-Auth-${stage}`, { stage });
 const data = new DataStack(app, `StarTime-Data-${stage}`, { stage });
 new ApiStack(app, `StarTime-Api-${stage}`, {
   stage,

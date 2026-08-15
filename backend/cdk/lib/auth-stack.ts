@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { Aws, CfnOutput, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import { Aws, CfnOutput, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
 import {
   AccountRecovery,
   ClientAttributes,
@@ -13,8 +13,6 @@ import { RestLambda } from './constructs/rest-lambda';
 
 export interface AuthStackProps extends StackProps {
   stage: string;
-  /** Only needed for the `prod` stage -- see backend/cdk/lambda/auth/migrate-user.ts. */
-  firebaseWebApiKey?: string;
 }
 
 export class AuthStack extends Stack {
@@ -32,35 +30,27 @@ export class AuthStack extends Stack {
       entry: path.join(__dirname, '../lambda/auth/post-confirmation-set-legacy-uid.ts'),
     });
 
-    const migrateUser = new RestLambda(this, 'MigrateUser', {
-      entry: path.join(__dirname, '../lambda/auth/migrate-user.ts'),
-      timeout: Duration.seconds(10),
-      environment: props.firebaseWebApiKey
-        ? { FIREBASE_WEB_API_KEY: props.firebaseWebApiKey }
-        : {},
-    });
-
     this.userPool = new UserPool(this, 'UserPool', {
       userPoolName: `startime-users-${props.stage}`,
       selfSignUpEnabled: true,
       signInAliases: { email: true },
       standardAttributes: { email: { required: true, mutable: true } },
-      // Canonical app-level user id -- set by postConfirmation for fresh
-      // sign-ups and by migrateUser for accounts carried over from Firebase.
-      // Deliberately not Cognito's own `sub`, which is always a fresh UUID
-      // and can never equal a migrated user's existing Firebase UID.
+      // The canonical app-level user id every handler keys on -- set by
+      // postConfirmation at sign-up. Deliberately not Cognito's own `sub`:
+      // `sub` is regenerated per user pool, so keying data on it would have
+      // made the accounts migrated from Firebase unreachable. The name is
+      // historical; it applies to every account, not just migrated ones.
       customAttributes: {
-        // Mutable so postConfirmation/migrateUser can set it after the user
-        // is created (a custom attribute can only be written at sign-up time
-        // otherwise). The App Client's writeAttributes below deliberately
-        // excludes it, so end users still can't self-edit it through the app.
+        // Mutable so postConfirmation can set it after the user exists (a
+        // custom attribute is otherwise only writable at sign-up time). The
+        // App Client's writeAttributes below excludes it, so end users still
+        // can't self-edit it through the app.
         legacy_uid: new StringAttribute({ mutable: true }),
       },
       accountRecovery: AccountRecovery.EMAIL_ONLY,
       lambdaTriggers: {
         preSignUp,
         postConfirmation,
-        userMigration: migrateUser,
       },
       // CDK's default for UserPool is RETAIN, which silently orphans a pool
       // on every `cdk destroy` -- exactly what with-ephemeral-stack.sh does
@@ -86,10 +76,10 @@ export class AuthStack extends Stack {
     this.userPoolClient = new UserPoolClient(this, 'UserPoolClient', {
       userPool: this.userPool,
       generateSecret: false,
-      // SRP (Cognito's default) never sends the plaintext password to the
-      // server, so it can't support migrate-user.ts verifying it against
-      // Firebase. USER_PASSWORD_AUTH also avoids hand-implementing SRP's
-      // client-side crypto in Swift without Amplify.
+      // USER_PASSWORD_AUTH is load-bearing, not leftover: AuthService.signIn
+      // calls InitiateAuth with .userPasswordAuth, and aws-sdk-swift ships no
+      // SRP implementation (that lives in Amplify, which this app doesn't
+      // use). Turning SRP on and this off would break sign-in outright.
       authFlows: { userPassword: true, userSrp: false },
       readAttributes: new ClientAttributes()
         .withStandardAttributes({ email: true })

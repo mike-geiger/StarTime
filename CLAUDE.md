@@ -8,7 +8,7 @@ StarTime is a SwiftUI iOS app for families to track kids' chores and reward them
 
 The backend is a serverless AWS stack living in `backend/` — **Cognito** (auth), **API Gateway + Lambda** (REST), **DynamoDB** (single-table), and an **API Gateway WebSocket API + DynamoDB Streams** (realtime), all provisioned with **AWS CDK in TypeScript**. The iOS client talks to it over HTTPS; it holds no AWS credentials and no direct database access.
 
-It was originally built on Firebase (Auth + Firestore called directly from the client). That migration is complete — there is no Firebase dependency left in the app. See `backend/scripts/` for the migration tooling, kept for reference.
+It was originally built on Firebase (Auth + Firestore called directly from the client). That migration is complete and nothing on a running path touches Firebase any more — the `UserMigration` Cognito trigger that verified passwords against Firebase during the cutover has been removed now that every account has migrated, so the Firebase project can be decommissioned safely. What's left is development-time only: `firebase-admin` in `backend/cdk`, used just by `scripts/migrate-firestore-to-dynamodb.mjs`, kept alongside `verify-migration-shape.mjs` as a record of the cutover.
 
 ## Build & test
 
@@ -128,9 +128,9 @@ Invite code             PK=INVITECODE#{code}   SK=METADATA   GSI1PK=HOUSEHOLD#{i
 
 Firestore's console-only security rules are gone; **authorization now lives in version-controlled Lambda code**. Every handler derives the caller's identity from `custom:legacy_uid` in the authorizer-validated token claims (`common/auth.ts`) and re-derives their `householdId` server-side. **Never trust a client-supplied uid or householdId.**
 
-**`custom:legacy_uid`, not Cognito's `sub`, is the canonical app-level user id.** `sub` is a fresh UUID Cognito generates and can never equal a migrated user's original Firebase UID. It's set by the `PostConfirmation` trigger for new sign-ups and by the `UserMigration` trigger for accounts carried over from Firebase.
+**`custom:legacy_uid`, not Cognito's `sub`, is the canonical app-level user id.** Set by the `PostConfirmation` trigger at sign-up, for every account. The name is historical — `sub` is regenerated per user pool, so data keyed on it could never have survived the provider change; a separate stable id is what let existing households stay reachable.
 
-The App Client uses `USER_PASSWORD_AUTH`, not SRP, because the `UserMigration` trigger needs the plaintext password to verify it against Firebase's Identity Toolkit API.
+**The App Client uses `USER_PASSWORD_AUTH`, not SRP, and that's load-bearing.** `AuthService.signIn` calls `InitiateAuth` with `.userPasswordAuth`, and aws-sdk-swift ships no SRP implementation (it's in Amplify, which this app doesn't use). Enabling SRP and disabling this breaks sign-in. It was originally chosen so the since-removed migration trigger could verify plaintext passwords against Firebase, but the client now depends on it independently.
 
 ### Realtime
 
