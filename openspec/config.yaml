@@ -90,16 +90,12 @@ context: |
     and aws-sdk-swift ships no SRP implementation (it lives in Amplify, which
     this app does not use). Enabling SRP and disabling this breaks sign-in.
 
-  Firebase leftovers
-  Nothing on a running path depends on Firebase. The Cognito UserMigration
-  trigger that verified passwords against Firebase during the cutover has been
-  removed, so the Firebase project can be decommissioned without breaking
-  sign-in. What remains is development-time only:
-  - firebase-admin, a dependency of backend/cdk, used solely by
-    scripts/migrate-firestore-to-dynamodb.mjs.
-  - That script and verify-migration-shape.mjs, kept as a record of the
-    cutover. Neither runs in any deploy or test path.
-  Both can be deleted once the Firebase project is gone.
+  Firebase
+  Fully removed: no code, dependency, or deployed resource references it. Do
+  not reintroduce a Firebase concept when planning changes -- if something
+  looks like it implies one (an "email verification step", a "server
+  timestamp"), it does not; see the Auth specifics above for how those are
+  actually handled.
 
   Realtime
   DynamoDB Streams -> fan-out Lambda -> WebSocket push of a lightweight
@@ -152,13 +148,14 @@ context: |
 
   History worth knowing
   The app originally ran on Firebase, with Auth and Firestore called directly
-  from the client, and was migrated to the AWS stack above with real data in
-  place. That is finished: the app is entirely on AWS. It explains several
-  things that would otherwise look arbitrary -- the custom:legacy_uid claim,
-  USER_PASSWORD_AUTH, and the leftovers listed under "Legacy surface still
-  present". The one-time tooling is kept under backend/cdk/scripts/
-  (migrate-firestore-to-dynamodb.mjs, verify-migration-shape.mjs) and is not
-  part of any running path.
+  from the client, and was migrated to the AWS stack above with real family
+  data in place. The migration is complete and its scaffolding is gone. It
+  survives only as an explanation for two things that would otherwise look
+  arbitrary: the custom:legacy_uid claim (an app-owned user id, because a
+  provider-owned one cannot outlive the provider) and USER_PASSWORD_AUTH.
+  verify-migration-shape.mjs also began there and has been kept, since the
+  contract it tests -- that items written outside the handlers are still
+  readable through them -- applies to any out-of-band write.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

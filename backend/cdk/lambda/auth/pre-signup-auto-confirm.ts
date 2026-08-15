@@ -1,7 +1,8 @@
 import type { PreSignUpTriggerHandler } from 'aws-lambda';
 
-// Matches today's Firebase behavior, where createUser signs the user in
-// immediately with no separate email-verification step.
+// Sign-up puts the user straight into the app: no emailed confirmation code,
+// no verification step. Deliberate for a family app where a parent sets up
+// accounts for kids who may not have reachable email.
 export const handler: PreSignUpTriggerHandler = async (event) => {
   event.response.autoConfirmUser = true;
   event.response.autoVerifyEmail = true;

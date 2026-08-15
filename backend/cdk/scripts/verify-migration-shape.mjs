@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 /**
- * Pre-cutover rehearsal: proves that data written in exactly the shape
- * migrate-firestore-to-dynamodb.mjs produces is fully readable by the new
- * backend.
+ * Storage-shape contract test: writes items directly into DynamoDB, bypassing
+ * every handler, then reads them back through the real REST API as a real
+ * signed-in user.
  *
- * This is the risk the migration script can't check by itself. The script
- * could run flawlessly against Firestore and still produce items the API
- * can't read -- a sort key that doesn't match a query's range, a missing
- * GSI attribute, a field the handler expects under another name. Here we
- * seed migrated-shaped items directly into DynamoDB, then read them back
- * through the real REST API as a real signed-in user.
+ * This catches the class of bug the UI tests structurally cannot, because
+ * they only ever read back what the handlers themselves just wrote: a sort
+ * key that falls outside a query's range, a missing GSI attribute, a field
+ * a handler expects under a different name. Anything that writes to the
+ * table without going through the API -- a backfill, a repair script, a
+ * restore -- depends on the assumptions asserted here.
  *
- * Uses no Firebase credentials: the item shapes are duplicated from the
- * migration script rather than produced by it, so a drift between the two
- * would show up as a failure here.
+ * It began as the pre-cutover rehearsal for the Firestore migration, which
+ * is why the seeded items carry ids in the old provider's format. That is
+ * now just a fixture, not a dependency; nothing here touches Firebase.
  *
  * Expects the env vars with-ephemeral-stack.sh exports.
  */

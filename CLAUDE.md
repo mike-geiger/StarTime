@@ -8,7 +8,7 @@ StarTime is a SwiftUI iOS app for families to track kids' chores and reward them
 
 The backend is a serverless AWS stack living in `backend/` — **Cognito** (auth), **API Gateway + Lambda** (REST), **DynamoDB** (single-table), and an **API Gateway WebSocket API + DynamoDB Streams** (realtime), all provisioned with **AWS CDK in TypeScript**. The iOS client talks to it over HTTPS; it holds no AWS credentials and no direct database access.
 
-It was originally built on Firebase (Auth + Firestore called directly from the client). That migration is complete and nothing on a running path touches Firebase any more — the `UserMigration` Cognito trigger that verified passwords against Firebase during the cutover has been removed now that every account has migrated, so the Firebase project can be decommissioned safely. What's left is development-time only: `firebase-admin` in `backend/cdk`, used just by `scripts/migrate-firestore-to-dynamodb.mjs`, kept alongside `verify-migration-shape.mjs` as a record of the cutover.
+It was originally built on Firebase (Auth + Firestore called directly from the client). That migration is finished and fully unwound: no code, dependency, or deployed resource references Firebase. The only trace left is `custom:legacy_uid` — the app-level user id that exists precisely *because* Cognito's `sub` is regenerated per user pool, which is what let existing households survive the provider change.
 
 ## Build & test
 
@@ -49,7 +49,7 @@ Some behavior can't be tested through XCUITest at all, because the suite drives 
 
 - `verify-realtime.mjs` — opens a WebSocket, writes over REST, asserts the pushed invalidation arrives. Covers authorizer → `$connect` → Streams → fan-out.
 - `verify-duplicate-guard.mjs` — fires 5 identical completions concurrently, asserts exactly one 201 and four 409s.
-- `verify-migration-shape.mjs` — seeds migrated-shaped items and reads them back through the API.
+- `verify-migration-shape.mjs` — writes items straight into DynamoDB, bypassing every handler, then reads them back through the API. Catches what the UI tests can't: they only read back what the handlers themselves wrote, so a sort key outside a query's range or a missing GSI attribute would pass unnoticed. Relevant to anything that writes to the table out-of-band (backfill, repair, restore).
 
 They live under `backend/cdk/` because ESM resolves imports relative to the file, and `node_modules` is there.
 

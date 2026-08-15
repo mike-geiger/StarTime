@@ -7,14 +7,13 @@ import {
 
 const client = new CognitoIdentityProviderClient({});
 
-// Stamps a canonical app-level user id into every fresh sign-up, mirroring
-// what the migrate-user trigger does for accounts carried over from Firebase
-// (see migrate-user.ts) so every Lambda can key off one consistent claim
-// (custom:legacy_uid) regardless of which path created the account.
+// Stamps the canonical app-level user id (custom:legacy_uid) onto every
+// account at sign-up. Every Lambda keys off that claim rather than Cognito's
+// `sub`, because `sub` is regenerated per user pool -- the id has to be one
+// this app controls, not one the identity provider owns.
 //
-// PostConfirmation_ConfirmSignUp only fires for the normal sign-up flow --
-// the UserMigration trigger's silent account creation during sign-in does
-// not trigger PostConfirmation, so this never overwrites a migrated uid.
+// Guarded to PostConfirmation_ConfirmSignUp so the trigger's other sources
+// (e.g. a forgot-password confirmation) can't overwrite an existing uid.
 export const handler: PostConfirmationTriggerHandler = async (event) => {
   if (event.triggerSource !== 'PostConfirmation_ConfirmSignUp') {
     return event;
