@@ -1,0 +1,183 @@
+schema: spec-driven
+
+context: |
+  StarTime is a family chore-and-rewards app: parents assign chores, kids
+  complete them for points, points are redeemed for rewards.
+
+  Tech stack
+  - iOS client: SwiftUI, Swift concurrency, Combine. Layered
+    Model -> Service -> Store -> View.
+  - Backend: AWS serverless, defined with CDK in TypeScript. Cognito for auth,
+    API Gateway + Lambda for REST, DynamoDB single-table for storage, and an
+    API Gateway WebSocket API fed by DynamoDB Streams for realtime.
+  - Repository layout: iOS app at the root, backend under backend/.
+
+  Conventions
+  - Specs (openspec/specs/) describe behavior and stay free of vendor names,
+    so they survive another backend change. This context and CLAUDE.md carry
+    the implementation. CLAUDE.md remains the fuller reference; what follows
+    is the subset needed to plan changes sensibly.
+  - Authorization is written in Lambda code, not console-managed rules.
+    Handlers derive the caller's identity from validated token claims and
+    re-derive their household server-side; a client-supplied user or
+    household id is never trusted.
+  - Correctness rules that a client cannot enforce alone (one completion per
+    chore per day, sufficient balance before redeeming) are enforced by
+    conditional writes on the server. Interface-level checks are a
+    convenience on top, never the guarantee.
+  - Tests run against real, disposable AWS stacks rather than mocks or
+    emulators; see backend/scripts/with-ephemeral-stack.sh.
+
+  Layout
+    StarTime/            iOS app
+      Models/            plain Codable structs mirroring Lambda JSON
+      Services/          APIClient, *Service (HTTP), *Store (state), auth,
+                         RealtimeConnectionManager, BackendConfig
+      Views/             SwiftUI
+      Config/            StarTime.xcconfig (build-time endpoint injection)
+    SupportingFiles/     Info.plist, deliberately outside StarTime/
+    backend/cdk/
+      bin/startime.ts    app entry; stacks suffixed by --context stage=
+      lib/               {health,auth,data,api,realtime}-stack.ts
+      lambda/            auth/, household/, chores/, rewards/, realtime/,
+                         common/
+      scripts/           verification + migration scripts (Node ESM)
+    backend/scripts/     with-ephemeral-stack.sh, deploy-prod.sh
+
+  DynamoDB single-table design
+    Household metadata  PK=HOUSEHOLD#{id}     SK=METADATA
+    User profile        PK=USER#{uid}         SK=PROFILE
+    Chore               PK=HOUSEHOLD#{id}     SK=CHORE#{choreId}
+    Reward              PK=HOUSEHOLD#{id}     SK=REWARD#{rewardId}
+    Completion          PK=HOUSEHOLD#{id}     SK=COMPLETION#{completedAtISO}#{id}
+    Redemption          PK=HOUSEHOLD#{id}     SK=REDEMPTION#{redeemedAtISO}#{id}
+    Balance             PK=HOUSEHOLD#{id}     SK=BALANCE#{uid}
+    Completion marker   PK=HOUSEHOLD#{id}     SK=COMPLETEDON#{choreId}#{scheduledDate}
+    Invite code         PK=INVITECODE#{code}  SK=METADATA
+                        GSI1PK=HOUSEHOLD#{id} GSI1SK=INVITECODE#{code}
+
+  - GSI1 exists for exactly one query: finding a household's invite codes
+    during cascade delete.
+  - Range queries need an explicit upper bound, e.g.
+    SK BETWEEN 'COMPLETION#{since}' AND 'COMPLETION#~'. A bare SK > :since
+    also matches METADATA and REWARD# under the same PK.
+  - COMPLETEDON# sorts before COMPLETION# ('E' < 'I'), so markers fall
+    outside the completion range. They are equally invisible to
+    begins_with('COMPLETION#'), so cascade delete names them explicitly.
+
+  REST surface (all routes require the Cognito authorizer)
+    GET    /households/me        profile + household in one read
+    POST   /households           create
+    POST   /households/join      redeem an invite code
+    POST   /households/invite-codes
+    DELETE /account              leave/cascade-delete, then delete profile
+    GET    /chores               POST /chores
+    PUT    /chores/{choreId}     DELETE /chores/{choreId}
+    GET    /completions          POST /completions
+    GET    /rewards              POST /rewards
+    PUT    /rewards/{rewardId}   DELETE /rewards/{rewardId}
+    GET    /redemptions          POST /redemptions
+    GET    /balances
+
+  Auth specifics
+  - custom:legacy_uid, not Cognito's sub, is the canonical app user id, set by
+    the PostConfirmation trigger at sign-up. Despite the name it is not
+    legacy: every handler keys on it, for every account. It exists because
+    `sub` is regenerated per user pool, so data keyed on `sub` could not have
+    survived the move between providers.
+  - The App Client uses USER_PASSWORD_AUTH rather than SRP, and this is
+    load-bearing: AuthService.signIn calls InitiateAuth with .userPasswordAuth,
+    and aws-sdk-swift ships no SRP implementation (it lives in Amplify, which
+    this app does not use). Enabling SRP and disabling this breaks sign-in.
+
+  Firebase leftovers
+  Nothing on a running path depends on Firebase. The Cognito UserMigration
+  trigger that verified passwords against Firebase during the cutover has been
+  removed, so the Firebase project can be decommissioned without breaking
+  sign-in. What remains is development-time only:
+  - firebase-admin, a dependency of backend/cdk, used solely by
+    scripts/migrate-firestore-to-dynamodb.mjs.
+  - That script and verify-migration-shape.mjs, kept as a record of the
+    cutover. Neither runs in any deploy or test path.
+  Both can be deleted once the Firebase project is gone.
+
+  Realtime
+  DynamoDB Streams -> fan-out Lambda -> WebSocket push of a lightweight
+  invalidation ({"type":"invalidate","resources":[...]}), not the changed
+  data. Clients refetch.
+  - WebSocket Lambda authorizers must return an IAM policy document; the
+    simple {isAuthorized:true} shape is HTTP-API-only and fails the handshake
+    with a bare 1006 and no diagnostic.
+  - The ID token rides in ?token=, because native WebSocket handshakes cannot
+    set headers.
+  - iOS suspends backgrounded apps and kills the socket without the app
+    observing it, so MainTabView refetches and reconnects on
+    scenePhase == .active. A push to a sleeping device is lost; there is no
+    queue.
+
+  Build and test
+  - Every xcodebuild invocation needs -skipPackagePluginValidation; smithy-swift
+    (via aws-sdk-swift) ships a code-generation plugin whose command-line trust
+    prompt does not persist between invocations.
+  - The app has no hardcoded endpoints: StarTime.xcconfig declares build
+    settings that Info.plist interpolates and BackendConfig.swift reads. A URL
+    cannot live in an xcconfig ('//' starts a comment), hence the split
+    scheme/host pair.
+  - UI tests run through backend/scripts/with-ephemeral-stack.sh, which
+    deploys a uniquely-named stack set, exports STARTIME_* env vars, runs the
+    command, and always destroys the stack. Use a simulator UDID, not a name;
+    a name lets Xcode clone simulators and cloned runners intermittently fail
+    to launch.
+  - Behavior XCUITest cannot reach (it drives one client) has Node scripts
+    under backend/cdk/scripts/: verify-realtime.mjs, verify-duplicate-guard.mjs,
+    verify-migration-shape.mjs.
+  - CDK's default removal policy is RETAIN for stateful resources. The table
+    and User Pool set stage === 'prod' ? RETAIN : DESTROY explicitly; without
+    it every ephemeral run silently orphans a User Pool. Do the same for any
+    new stateful resource.
+
+  Failure modes already paid for
+  - Stores must be shared, not per-view. With fetch-based stores a write
+    through one instance is invisible to the others. (The per-view pattern
+    survived from an earlier design whose live listeners pushed every write
+    to every instance, hiding the flaw.)
+  - observe(_:) subscriptions must not be torn down by stop(), because
+    start() calls stop() internally. Getting this wrong silently disables the
+    entire realtime layer while the backend looks healthy.
+  - Never refetch in response to a @Published change of a store the view
+    observes; it feeds back into the re-render and the app never goes idle,
+    which surfaces as XCUITest timing out while synthesizing an event.
+  - Background refetch failures must not populate user-facing errorMessage; a
+    modal alert blocks UI interaction, including test taps.
+
+  History worth knowing
+  The app originally ran on Firebase, with Auth and Firestore called directly
+  from the client, and was migrated to the AWS stack above with real data in
+  place. That is finished: the app is entirely on AWS. It explains several
+  things that would otherwise look arbitrary -- the custom:legacy_uid claim,
+  USER_PASSWORD_AUTH, and the leftovers listed under "Legacy surface still
+  present". The one-time tooling is kept under backend/cdk/scripts/
+  (migrate-firestore-to-dynamodb.mjs, verify-migration-shape.mjs) and is not
+  part of any running path.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
