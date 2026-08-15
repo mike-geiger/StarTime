@@ -399,13 +399,13 @@ final class StarTimeUITests: XCTestCase {
         XCTAssertTrue(pendingRow.waitForExistence(timeout: 15), "Redeeming should leave a request waiting on the parent, naming who asked for what")
         XCTAssertTrue(app.staticTexts["Waiting on you"].exists, "The queue should lead the parent's screen")
 
-        let rewardsTab = app.tabBars.buttons["Rewards"]
-        let badged = NSPredicate(format: "label CONTAINS '1' OR value CONTAINS '1'")
-        let tabShowsCount = XCTNSPredicateExpectation(predicate: badged, object: rewardsTab)
-        XCTAssertEqual(
-            XCTWaiter().wait(for: [tabShowsCount], timeout: 10), .completed,
-            "The Rewards tab should badge the one pending request"
-        )
+        // The Rewards tab badge is deliberately NOT asserted here. XCUITest
+        // does not surface a SwiftUI tab badge at all: the tab element dumps
+        // as `identifier: 'star.fill', label: 'Rewards'` with no badge in
+        // either the label or the value, so any assertion on it can only
+        // ever fail. What the badge counts -- `RewardStore.pendingCount` --
+        // is the same `pendingRedemptions` that drives the queue section
+        // below, and that is covered here and in the cancel test.
         add(XCTAttachment(screenshot: app.screenshot()))
 
         // --- Handing it over clears it from the queue ---

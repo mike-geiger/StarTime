@@ -50,8 +50,8 @@ Some behavior can't be tested through XCUITest at all, because the suite drives 
 - `verify-realtime.mjs` — opens a WebSocket, writes over REST, asserts the pushed invalidation arrives. Covers authorizer → `$connect` → Streams → fan-out.
 - `verify-duplicate-guard.mjs` — fires 5 identical completions concurrently, asserts exactly one 201 and four 409s.
 - `verify-migration-shape.mjs` — writes items straight into DynamoDB, bypassing every handler, then reads them back through the API. Catches what the UI tests can't: they only read back what the handlers themselves wrote, so a sort key outside a query's range or a missing GSI attribute would pass unnoticed. Relevant to anything that writes to the table out-of-band (backfill, repair, restore).
-
 - `verify-redemption-lifecycle.mjs` — drives a redemption through its fulfillment states using **two** identities, a parent and a child. Asserts the child's token is 403 on every transition, that five concurrent cancels refund exactly once, and that a status-less legacy row reads as fulfilled.
+- `verify-deployment-marker.mjs` — asserts `/health` reports the commit and dirty flag the stack was actually built from, that a deliberately wrong expected commit is detected as a mismatch, and that an unreachable endpoint never reads as a match. The same comparison `deploy-prod.sh` makes against prod, run here against a throwaway stack.
 
 They live under `backend/cdk/` because ESM resolves imports relative to the file, and `node_modules` is there.
 
@@ -105,6 +105,10 @@ backend/scripts/
 ```
 
 **Stages.** Everything is namespaced by `--context stage=`. `prod` holds real family data; `test-<runid>` stages are created and destroyed per test run.
+
+**`GET /health` reports what is deployed, not just that something is.** It's unauthenticated and returns `{status, stage, commit, dirty}` — `commit`/`dirty` are resolved once in `bin/startime.ts` via `git rev-parse --short HEAD` / `git status --porcelain` at synth time (a bundled Lambda has no git metadata of its own) and set as env vars on the health Lambda only. `deploy-prod.sh` curls it after every deploy and fails if the reported commit doesn't match local `HEAD` — a deploy that reports success but never actually served the new code is exactly the failure this catches. Kept off every other Lambda deliberately: a commit baked into all twenty-odd functions' environments would put a diff line on each of them on every commit, burying real changes in the `cdk diff` the script prints before asking to confirm. No build timestamp either, for the same reason — it would diff on every synth, even a re-deploy of the identical commit.
+
+**`cdk diff` must run against the default `cdk.out`, not a custom `--output`.** `RestLambda` bundles with `sourceMap: true`, which embeds absolute paths; synthesizing to a different output directory changes those paths and therefore every asset hash, so the diff reports all five stacks as changed when nothing actually differs from what's deployed. This produced a real false alarm mid-session — a `cdk diff --output /tmp/...` run looked like an incomplete rollout until re-run against the default directory showed zero differences.
 
 **CDK's default removal policy is RETAIN for stateful resources.** Both the DynamoDB table and the Cognito User Pool set `stage === 'prod' ? RETAIN : DESTROY` explicitly. Without that, every ephemeral test run silently orphans a User Pool. Apply the same treatment to any new stateful resource.
 
