@@ -59,6 +59,26 @@ They live under `backend/cdk/` because ESM resolves imports relative to the file
 
 Each ephemeral run deploys and destroys real AWS resources — typically ~1–3 minutes each way, longer under throttling. Prefer targeting a single test while iterating.
 
+### Installing on a physical device
+
+The family's iPhone and iPad are updated by building a Release build pointed at the **persistent `prod` stack** (not an ephemeral one — those get destroyed on exit) and pushing it straight to the device, no App Store / TestFlight involved. Code signing is `Automatic` with a `DEVELOPMENT_TEAM` already set in the project, so `-allowProvisioningUpdates` is enough for Xcode to handle it.
+
+1. Confirm prod is actually current: compare `git rev-parse --short HEAD` against `commit` from prod's `/health` (`ApiBaseUrl`'s sibling `HealthApiUrl` in `backend/cdk/outputs/prod.json`). If they differ, that's a `backend/scripts/deploy-prod.sh` call, not a rebuild — deploy prod first (confirm with the user; see the script's own warnings about `prod` having no teardown path).
+2. Confirm the device is actually reachable — `xcrun xctrace list devices` can report a plugged-in device as offline from a stale cache; `xcrun devicectl list devices` reflects live state (`available (paired)`).
+3. Get each destination's `id` via `xcodebuild -scheme StarTime -showdestinations -project StarTime.xcodeproj` — it's a different UDID format than the one `xctrace`/`devicectl` print.
+4. Derive the `STARTIME_*` build settings from `backend/cdk/outputs/prod.json` (`StarTime-Auth-prod`, `StarTime-Api-prod.ApiBaseUrl`, `StarTime-Realtime-prod.WebSocketUrl` — split each URL into scheme/host per the "Configuration" section below), and build straight to a device destination:
+   ```bash
+   xcodebuild build -project StarTime.xcodeproj -scheme StarTime \
+     -destination 'id=<DEVICE_UDID>' -configuration Release \
+     -derivedDataPath build/<device-name> \
+     -skipPackagePluginValidation -allowProvisioningUpdates \
+     STARTIME_USER_POOL_ID=... STARTIME_USER_POOL_CLIENT_ID=... STARTIME_AWS_REGION=us-west-2 \
+     STARTIME_API_SCHEME=https STARTIME_API_HOST=... STARTIME_WS_SCHEME=wss STARTIME_WS_HOST=...
+   ```
+5. Install the built `.app` (under `build/<device-name>/Build/Products/Release-iphoneos/StarTime.app`) with `xcrun devicectl device install app --device <DEVICE_UDID> <path-to-.app>` — `xcodebuild build` only compiles, it doesn't push to the device.
+
+`-derivedDataPath build/...` output is multi-GB per target and gitignored (`/build/`); delete it after installing, it's disposable.
+
 ## Configuration
 
 The app has no hardcoded endpoints. `StarTime/Config/StarTime.xcconfig` declares build settings that `SupportingFiles/Info.plist` interpolates, and `BackendConfig.swift` reads them (with a `ProcessInfo.environment` override for launch-time swapping).

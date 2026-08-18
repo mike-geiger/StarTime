@@ -1,5 +1,9 @@
 StarTime/GoogleService-Info.plist
 
+# xcodebuild -derivedDataPath output for on-device installs (see CLAUDE.md,
+# "Installing on a physical device"). Multi-GB per target -- never committed.
+/build/
+
 # AWS CDK backend
 backend/cdk/node_modules/
 backend/cdk/cdk.out/
