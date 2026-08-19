@@ -78,12 +78,14 @@ struct RewardService {
 
     /// Moves a redemption along its fulfillment lifecycle. The server decides
     /// which transitions are legal from the redemption's current state, so
-    /// this just names the destination.
+    /// this just names the destination. `note` is only meaningful for
+    /// `.pending` (un-fulfil) and `.cancelled` (cancel) targets; the server
+    /// ignores it for `.fulfilled`.
     @MainActor
-    func updateRedemptionStatus(redemptionId: String, status: RedemptionStatus) async throws {
-        struct Body: Encodable { let status: RedemptionStatus }
+    func updateRedemptionStatus(redemptionId: String, status: RedemptionStatus, note: String? = nil) async throws {
+        struct Body: Encodable { let status: RedemptionStatus; let note: String? }
         do {
-            try await api.send("PATCH", "redemptions/\(redemptionId)", body: Body(status: status))
+            try await api.send("PATCH", "redemptions/\(redemptionId)", body: Body(status: status, note: note))
         } catch let error as APIError where error.statusCode == 403 {
             throw RewardServiceError.parentOnly(
                 error.message ?? "Only a parent can update a redemption."

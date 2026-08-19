@@ -62,5 +62,5 @@
 
 - [x] 8.1 Add a UI test: a parent redeems on a child's behalf, sees the queue row and the tab badge, taps "Fulfilled", and watches the row leave the queue. Clean up the account on every path.
 - [x] 8.2 Add a UI test for cancel: a parent cancels a pending redemption and the child's balance returns to its prior value on screen.
-- [ ] 8.3 Run the full UI suite against an ephemeral stack with a simulator UDID destination, per CLAUDE.md, and confirm no test regresses into a "Timed out while synthesizing event" failure — that would mean the notifier introduced a refetch loop.
+- [x] 8.3 Run the full UI suite against an ephemeral stack with a simulator UDID destination, per CLAUDE.md, and confirm no test regresses into a "Timed out while synthesizing event" failure — that would mean the notifier introduced a refetch loop.
 - [x] 8.4 Update CLAUDE.md: the redemption item's new attributes, the read-normalized legacy default, `PATCH /redemptions/{redemptionId}` and its parent-only rule, the single `pending → cancelled` refund path as an invariant, and `verify-redemption-lifecycle.mjs` in the verification-script list.

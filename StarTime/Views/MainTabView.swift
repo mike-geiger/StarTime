@@ -15,6 +15,7 @@ struct MainTabView: View {
     @StateObject private var rewardStore = RewardStore()
     @StateObject private var realtime = RealtimeConnectionManager()
     @StateObject private var pendingNotifier = PendingRedemptionNotifier()
+    @StateObject private var reversalNotifier = RewardReversalNotifier()
 
     private var isParent: Bool { householdStore.profile?.role == .parent }
 
@@ -49,6 +50,9 @@ struct MainTabView: View {
             // should still be announced. Strictly a reader of the store --
             // see PendingRedemptionNotifier on why it must never refetch.
             pendingNotifier.start(store: rewardStore, householdId: householdId, isParent: isParent)
+            if let uid = auth.user?.uid {
+                reversalNotifier.start(store: rewardStore, householdId: householdId, uid: uid)
+            }
             choreStore.start(householdId: householdId)
             rewardStore.start(householdId: householdId)
             if let idToken = auth.idToken {
@@ -83,6 +87,7 @@ struct MainTabView: View {
             // Signing out: drop the badge and forget what this device
             // announced, so the next family on this device starts clean.
             pendingNotifier.stop()
+            reversalNotifier.stop()
         }
     }
 }

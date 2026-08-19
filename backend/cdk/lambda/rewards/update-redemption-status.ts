@@ -50,10 +50,25 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       throw new HttpError(400, 'redemptionId is required');
     }
 
-    const { status: target } = JSON.parse(event.body ?? '{}');
+    const { status: target, note: rawNote } = JSON.parse(event.body ?? '{}');
     if (!REDEMPTION_STATUSES.includes(target)) {
       throw new HttpError(400, `status must be one of ${REDEMPTION_STATUSES.join(', ')}`);
     }
+
+    // Only the transitions that can carry a note read `rawNote` at all -- a
+    // note sent alongside `status: 'fulfilled'` is never even validated,
+    // let alone stored, since fulfilling doesn't accept one.
+    const resolveNote = (): string | undefined => {
+      if (rawNote === undefined) return undefined;
+      if (typeof rawNote !== 'string') {
+        throw new HttpError(400, 'note must be a string');
+      }
+      const trimmed = rawNote.trim();
+      if (trimmed.length > 500) {
+        throw new HttpError(400, 'note must be 500 characters or fewer');
+      }
+      return trimmed.length > 0 ? trimmed : undefined;
+    };
 
     // Scoped to the caller's own household, so a redemption belonging to
     // anyone else is simply not found -- which discloses nothing about
@@ -78,8 +93,10 @@ export const handler: APIGatewayProxyHandler = async (event) => {
             new UpdateCommand({
               TableName: TABLE_NAME,
               Key,
+              // A stale note from an earlier reversal no longer applies once
+              // the redemption is resolved again.
               UpdateExpression:
-                'SET #status = :fulfilled, fulfilledAt = :now, fulfilledByUID = :uid, fulfilledByName = :name',
+                'SET #status = :fulfilled, fulfilledAt = :now, fulfilledByUID = :uid, fulfilledByName = :name REMOVE reversalNote',
               ConditionExpression: '#status = :pending',
               ExpressionAttributeNames: { '#status': 'status' },
               ExpressionAttributeValues: {
@@ -100,12 +117,32 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         }
 
         case 'pending': {
+          const note = resolveNote();
+          // `unfulfilledAt` is a fresh timestamp on every un-fulfil, not just
+          // display data: unlike `cancelledAt` (set once, since cancelled is
+          // terminal), the same redemption can be un-fulfilled more than
+          // once, and this is what lets the reversal notifier tell one such
+          // event from the next. The note itself always reflects only the
+          // most recent reversal -- set when supplied, cleared when not.
+          const setParts = ['#status = :pending', 'unfulfilledAt = :now'];
+          const removeParts = ['fulfilledAt', 'fulfilledByUID', 'fulfilledByName'];
+          const values: Record<string, unknown> = {
+            ':pending': 'pending',
+            ':fulfilled': 'fulfilled',
+            ':now': new Date().toISOString(),
+          };
+          if (note !== undefined) {
+            setParts.push('reversalNote = :note');
+            values[':note'] = note;
+          } else {
+            removeParts.push('reversalNote');
+          }
+
           const result = await ddb.send(
             new UpdateCommand({
               TableName: TABLE_NAME,
               Key,
-              UpdateExpression:
-                'SET #status = :pending REMOVE fulfilledAt, fulfilledByUID, fulfilledByName',
+              UpdateExpression: `SET ${setParts.join(', ')} REMOVE ${removeParts.join(', ')}`,
               // The one place a status-less legacy row is visible to a write.
               // Those rows mean "fulfilled" (see DEFAULT_STATUS), so
               // un-fulfilling one is legal. Nothing else can meet a
@@ -113,7 +150,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
               // which it can never satisfy.
               ConditionExpression: 'attribute_not_exists(#status) OR #status = :fulfilled',
               ExpressionAttributeNames: { '#status': 'status' },
-              ExpressionAttributeValues: { ':pending': 'pending', ':fulfilled': 'fulfilled' },
+              ExpressionAttributeValues: values,
               ReturnValues: 'ALL_NEW',
             })
           );
@@ -122,6 +159,27 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         }
 
         case 'cancelled': {
+          const note = resolveNote();
+          // Same overwrite-or-clear rule as un-fulfil: cancelling is itself
+          // a reversal, so it takes over the note field regardless of
+          // whatever an earlier un-fulfil left there.
+          const setParts = ['#status = :cancelled', 'cancelledAt = :now', 'cancelledByUID = :uid'];
+          const values: Record<string, unknown> = {
+            ':cancelled': 'cancelled',
+            ':pending': 'pending',
+            ':now': new Date().toISOString(),
+            ':uid': uid,
+          };
+          const removeParts: string[] = [];
+          if (note !== undefined) {
+            setParts.push('reversalNote = :note');
+            values[':note'] = note;
+          } else {
+            removeParts.push('reversalNote');
+          }
+          const cancelUpdateExpression =
+            `SET ${setParts.join(', ')}` + (removeParts.length ? ` REMOVE ${removeParts.join(', ')}` : '');
+
           await ddb.send(
             new TransactWriteCommand({
               TransactItems: [
@@ -129,16 +187,10 @@ export const handler: APIGatewayProxyHandler = async (event) => {
                   Update: {
                     TableName: TABLE_NAME,
                     Key,
-                    UpdateExpression:
-                      'SET #status = :cancelled, cancelledAt = :now, cancelledByUID = :uid',
+                    UpdateExpression: cancelUpdateExpression,
                     ConditionExpression: '#status = :pending',
                     ExpressionAttributeNames: { '#status': 'status' },
-                    ExpressionAttributeValues: {
-                      ':cancelled': 'cancelled',
-                      ':pending': 'pending',
-                      ':now': new Date().toISOString(),
-                      ':uid': uid,
-                    },
+                    ExpressionAttributeValues: values,
                   },
                 },
                 {

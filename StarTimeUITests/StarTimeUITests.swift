@@ -424,13 +424,18 @@ final class StarTimeUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Redeem"].firstMatch.isEnabled, "Fulfilling must not give the points back")
 
         // Un-fulfil is the way back from a mistaken tap, and the only route
-        // to cancelling something already marked fulfilled.
+        // to cancelling something already marked fulfilled. It now confirms
+        // first (with an optional note), the same as cancel already does.
         let historyRow = app.staticTexts["Kiddo — Ice cream"].firstMatch
         XCTAssertTrue(historyRow.waitForExistence(timeout: 5))
         historyRow.swipeLeft()
         let unfulfillButton = app.buttons["Un-fulfill"].firstMatch
         XCTAssertTrue(unfulfillButton.waitForExistence(timeout: 5), "A fulfilled request should offer Un-fulfill")
         unfulfillButton.tap()
+
+        let confirmUnfulfill = app.buttons["Un-fulfill and return to queue"]
+        XCTAssertTrue(confirmUnfulfill.waitForExistence(timeout: 5), "Un-fulfilling should confirm first")
+        confirmUnfulfill.tap()
 
         XCTAssertTrue(queuedRequest(app).waitForExistence(timeout: 15), "Un-fulfilling should put it back in the queue")
         XCTAssertFalse(app.buttons["Redeem"].firstMatch.isEnabled, "Un-fulfilling must not move points either")
@@ -481,6 +486,93 @@ final class StarTimeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Cancelled — points returned"].exists, "The cancelled entry should stay in history, labelled")
         XCTAssertFalse(app.staticTexts["Waiting on you"].exists, "With nothing pending, the queue should not be shown at all")
         add(XCTAttachment(screenshot: app.screenshot()))
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// The note is optional and durable: it rides along with the cancel and
+    /// shows up on the resulting history entry, not just in a notification
+    /// that could be missed.
+    @MainActor
+    func testStage6ParentCancelsWithANoteAndItShowsInHistory() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithPendingRedemption(app: app, prefix: "cancelnote6")
+
+        let pendingRow = queuedRequest(app)
+        XCTAssertTrue(pendingRow.waitForExistence(timeout: 15))
+
+        pendingRow.swipeLeft()
+        let cancelButton = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5))
+        cancelButton.tap()
+
+        let noteField = app.textFields["Note (optional)"]
+        XCTAssertTrue(noteField.waitForExistence(timeout: 5), "Cancelling should offer an optional note")
+        noteField.tap()
+        noteField.typeText("out of stock")
+
+        let confirm = app.buttons["Cancel and return 5 points"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+
+        let leftTheQueue = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: pendingRow)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [leftTheQueue], timeout: 15), .completed,
+            "A cancelled request should leave the parent's queue"
+        )
+
+        XCTAssertTrue(app.staticTexts["Cancelled — points returned"].waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            app.staticTexts["out of stock"].waitForExistence(timeout: 5),
+            "The note should show alongside the cancelled entry"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Un-fulfilling had no confirmation at all before this change; this
+    /// checks the new one actually offers a note and that the note travels
+    /// with the redemption back into the pending queue.
+    @MainActor
+    func testStage6ParentUnfulfillsWithANoteAndItShowsInTheQueue() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithPendingRedemption(app: app, prefix: "unfulfilnote6")
+
+        let pendingRow = queuedRequest(app)
+        XCTAssertTrue(pendingRow.waitForExistence(timeout: 15))
+
+        let fulfillButton = app.buttons["Fulfilled"].firstMatch
+        XCTAssertTrue(fulfillButton.waitForExistence(timeout: 5))
+        fulfillButton.tap()
+
+        let leftTheQueue = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: pendingRow)
+        XCTAssertEqual(XCTWaiter().wait(for: [leftTheQueue], timeout: 15), .completed)
+
+        let historyRow = app.staticTexts["Kiddo — Ice cream"].firstMatch
+        XCTAssertTrue(historyRow.waitForExistence(timeout: 5))
+        historyRow.swipeLeft()
+        let unfulfillButton = app.buttons["Un-fulfill"].firstMatch
+        XCTAssertTrue(unfulfillButton.waitForExistence(timeout: 5))
+        unfulfillButton.tap()
+
+        let noteField = app.textFields["Note (optional)"]
+        XCTAssertTrue(noteField.waitForExistence(timeout: 5), "Un-fulfilling should offer an optional note")
+        noteField.tap()
+        noteField.typeText("wrong reward, sorry")
+
+        let confirm = app.buttons["Un-fulfill and return to queue"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+
+        XCTAssertTrue(queuedRequest(app).waitForExistence(timeout: 15), "Un-fulfilling should put it back in the queue")
+        XCTAssertTrue(
+            app.staticTexts["wrong reward, sorry"].waitForExistence(timeout: 5),
+            "The note should show alongside the requeued row"
+        )
 
         tearDownAccounts(app: app, accounts: accounts)
     }

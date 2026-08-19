@@ -104,18 +104,18 @@ final class RewardStore: ObservableObject {
         updateStatus(of: redemption, to: .fulfilled)
     }
 
-    func unfulfill(_ redemption: Redemption) {
-        updateStatus(of: redemption, to: .pending)
+    func unfulfill(_ redemption: Redemption, note: String? = nil) {
+        updateStatus(of: redemption, to: .pending, note: note)
     }
 
-    func cancel(_ redemption: Redemption) {
-        updateStatus(of: redemption, to: .cancelled)
+    func cancel(_ redemption: Redemption, note: String? = nil) {
+        updateStatus(of: redemption, to: .cancelled, note: note)
     }
 
-    private func updateStatus(of redemption: Redemption, to status: RedemptionStatus) {
+    private func updateStatus(of redemption: Redemption, to status: RedemptionStatus, note: String? = nil) {
         guard let redemptionId = redemption.id else { return }
         perform {
-            try await self.service.updateRedemptionStatus(redemptionId: redemptionId, status: status)
+            try await self.service.updateRedemptionStatus(redemptionId: redemptionId, status: status, note: note)
         }
     }
 

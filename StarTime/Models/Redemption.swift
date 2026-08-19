@@ -25,4 +25,12 @@ struct Redemption: Identifiable, Codable {
     var fulfilledAt: Date?
     var fulfilledByName: String?
     var cancelledAt: Date?
+    /// Set by the most recent cancel or un-fulfil, whichever happened last;
+    /// cleared when the redemption is fulfilled again. Never carries a note
+    /// from a reversal that's since been superseded.
+    var reversalNote: String?
+    /// Stamped fresh on every un-fulfil, unlike `cancelledAt` which is set
+    /// once since cancelled is terminal. Exists so the reversal notifier can
+    /// tell one un-fulfil event from the next on the same redemption.
+    var unfulfilledAt: Date?
 }

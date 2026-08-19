@@ -11,6 +11,13 @@ struct RewardsView: View {
     /// itself (rather than a bool) keeps the confirmation bound to the row
     /// that was swiped even if the list reorders underneath it.
     @State private var redemptionPendingCancellation: Redemption?
+    /// Same shape as cancellation, for the same reason: un-fulfilling had no
+    /// confirmation at all before this, and now both reversals share a
+    /// moment to explain why.
+    @State private var redemptionPendingUnfulfillment: Redemption?
+    /// Backs the note field in whichever of the two alerts above is showing.
+    /// Only one can be presented at a time, so sharing this is safe.
+    @State private var reversalNoteDraft = ""
 
     private var isParent: Bool { householdStore.profile?.role == .parent }
 
@@ -78,6 +85,7 @@ struct RewardsView: View {
                                         // indistinguishable from a reward
                                         // already in hand.
                                         statusPill(redemption.status)
+                                        reversalNoteText(redemption)
                                     }
                                     Spacer()
                                     Text("-\(redemption.pointsSpent)")
@@ -119,23 +127,61 @@ struct RewardsView: View {
         } message: {
             Text(rewardStore.errorMessage ?? "")
         }
-        .confirmationDialog(
+        // `.confirmationDialog` can't host a `TextField`, so the optional
+        // note pushed this to `.alert`, which can embed one in `actions`.
+        .alert(
             "Cancel this request?",
             isPresented: Binding(
                 get: { redemptionPendingCancellation != nil },
-                set: { if !$0 { redemptionPendingCancellation = nil } }
+                set: { if !$0 { redemptionPendingCancellation = nil; reversalNoteDraft = "" } }
             ),
-            titleVisibility: .visible,
             presenting: redemptionPendingCancellation
         ) { redemption in
+            TextField("Note (optional)", text: $reversalNoteDraft)
             Button("Cancel and return \(redemption.pointsSpent) points", role: .destructive) {
-                rewardStore.cancel(redemption)
+                rewardStore.cancel(redemption, note: resolvedNoteDraft)
                 redemptionPendingCancellation = nil
+                reversalNoteDraft = ""
             }
-            Button("Keep it", role: .cancel) { redemptionPendingCancellation = nil }
+            Button("Keep it", role: .cancel) {
+                redemptionPendingCancellation = nil
+                reversalNoteDraft = ""
+            }
         } message: { redemption in
             Text("\(redemption.redeemedByName) will get their \(redemption.pointsSpent) points back.")
         }
+        .alert(
+            "Un-fulfill this reward?",
+            isPresented: Binding(
+                get: { redemptionPendingUnfulfillment != nil },
+                set: { if !$0 { redemptionPendingUnfulfillment = nil; reversalNoteDraft = "" } }
+            ),
+            presenting: redemptionPendingUnfulfillment
+        ) { redemption in
+            TextField("Note (optional)", text: $reversalNoteDraft)
+            // Named for its consequence, like the cancel alert's confirm
+            // button -- and distinct from the swipe action's plain
+            // "Un-fulfill" label, which triggers this alert rather than
+            // performing the transition itself.
+            Button("Un-fulfill and return to queue", role: .destructive) {
+                rewardStore.unfulfill(redemption, note: resolvedNoteDraft)
+                redemptionPendingUnfulfillment = nil
+                reversalNoteDraft = ""
+            }
+            Button("Keep as fulfilled", role: .cancel) {
+                redemptionPendingUnfulfillment = nil
+                reversalNoteDraft = ""
+            }
+        } message: { redemption in
+            Text("\(redemption.redeemedByName) will need to wait for it again.")
+        }
+    }
+
+    /// `nil` rather than an empty string when the field was left blank, so a
+    /// blank submission clears any previous note instead of storing "".
+    private var resolvedNoteDraft: String? {
+        let trimmed = reversalNoteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - Parent sections
@@ -171,6 +217,9 @@ struct RewardsView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                // Present when this is back in the queue because a parent
+                // un-fulfilled it with a note, rather than a fresh request.
+                reversalNoteText(redemption)
             }
 
             Spacer()
@@ -204,6 +253,7 @@ struct RewardsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("\(redemption.redeemedByName) — \(redemption.rewardName)")
                             statusPill(redemption.status)
+                            reversalNoteText(redemption)
                         }
                         Spacer()
                         Text("-\(redemption.pointsSpent)")
@@ -211,7 +261,7 @@ struct RewardsView: View {
                     }
                     .swipeActions {
                         if redemption.status == .fulfilled {
-                            Button("Un-fulfill") { rewardStore.unfulfill(redemption) }
+                            Button("Un-fulfill") { redemptionPendingUnfulfillment = redemption }
                                 .tint(.orange)
                                 .accessibilityIdentifier("unfulfillRedemptionButton-\(redemption.id ?? "")")
                         }
@@ -238,6 +288,19 @@ struct RewardsView: View {
             Label("Cancelled — points returned", systemImage: "arrow.uturn.backward")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Only ever non-nil after a cancel or un-fulfil that included one, and
+    /// cleared server-side the moment the redemption is fulfilled again, so
+    /// this never shows a note that's since been superseded.
+    @ViewBuilder
+    private func reversalNoteText(_ redemption: Redemption) -> some View {
+        if let note = redemption.reversalNote, !note.isEmpty {
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .italic()
         }
     }
 

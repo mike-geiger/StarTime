@@ -156,7 +156,8 @@ try {
       redeemedByUID: child.uid,
       redeemedByName: 'Kiddo',
     });
-  const patch = (who, id, status) => who.api('PATCH', `redemptions/${id}`, { status });
+  const patch = (who, id, status, note) =>
+    who.api('PATCH', `redemptions/${id}`, note !== undefined ? { status, note } : { status });
   const balanceOf = async (uid) => (await parent.api('GET', 'balances')).body.balances[uid];
   const redemptionById = async (id) => {
     const all = await parent.api('GET', 'redemptions');
@@ -275,6 +276,57 @@ try {
   check('a legacy row can still be un-fulfilled', legacyUnfulfil.status, 200);
   check('and becomes pending', legacyUnfulfil.body.redemption.status, 'pending');
   check('un-fulfilling it moved no points', await balanceOf(child.uid), 20);
+
+  console.log('10. un-fulfilling with a note records it and stamps unfulfilledAt');
+  const fourth = await redeem();
+  const fourthId = fourth.body.redemption.id;
+  await patch(parent, fourthId, 'fulfilled');
+  const unfulfilWithNote = await patch(parent, fourthId, 'pending', 'wrong reward, sorry');
+  check('un-fulfil with note accepted', unfulfilWithNote.status, 200);
+  check('note recorded on un-fulfil', unfulfilWithNote.body.redemption.reversalNote, 'wrong reward, sorry');
+  const firstUnfulfilledAt = unfulfilWithNote.body.redemption.unfulfilledAt;
+  check('unfulfilledAt stamped', typeof firstUnfulfilledAt, 'string');
+
+  console.log('11. fulfilling clears a stale reversal note');
+  const refulfilled = await patch(parent, fourthId, 'fulfilled');
+  check('re-fulfil accepted', refulfilled.status, 200);
+  check('reversalNote cleared by fulfil', refulfilled.body.redemption.reversalNote, undefined);
+
+  console.log('12. unfulfilledAt is fresh on each un-fulfil');
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const unfulfilAgain = await patch(parent, fourthId, 'pending');
+  check('second un-fulfil accepted', unfulfilAgain.status, 200);
+  check('no note this time', unfulfilAgain.body.redemption.reversalNote, undefined);
+  check(
+    'unfulfilledAt changed between the two events',
+    unfulfilAgain.body.redemption.unfulfilledAt !== firstUnfulfilledAt,
+    true
+  );
+
+  console.log('13. cancelling with and without a note');
+  const fifth = await redeem();
+  const fifthId = fifth.body.redemption.id;
+  const cancelNoNote = await patch(parent, fifthId, 'cancelled');
+  check('cancel without note accepted', cancelNoNote.status, 200);
+  check('no note recorded', cancelNoNote.body.redemption.reversalNote, undefined);
+
+  const sixth = await redeem();
+  const sixthId = sixth.body.redemption.id;
+  const cancelWithNote = await patch(parent, sixthId, 'cancelled', 'out of stock');
+  check('cancel with note accepted', cancelWithNote.status, 200);
+  check('note recorded on cancel', cancelWithNote.body.redemption.reversalNote, 'out of stock');
+
+  console.log('14. a note is validated, and scoped to the transitions that accept one');
+  const seventh = await redeem();
+  const seventhId = seventh.body.redemption.id;
+  const overlong = await patch(parent, seventhId, 'cancelled', 'x'.repeat(501));
+  check('note over 500 chars refused', overlong.status, 400);
+  check('redemption unchanged after refused note', (await redemptionById(seventhId))?.status, 'pending');
+  check('no note leaked from the refused attempt', (await redemptionById(seventhId))?.reversalNote, undefined);
+
+  const fulfilWithNote = await patch(parent, seventhId, 'fulfilled', 'this should be ignored');
+  check('a note alongside fulfilled is accepted, not an error', fulfilWithNote.status, 200);
+  check('but not stored', fulfilWithNote.body.redemption.reversalNote, undefined);
 } finally {
   await cleanup();
 }
