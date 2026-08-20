@@ -89,6 +89,28 @@ final class ChoreStore: ObservableObject {
         }
     }
 
+    /// Daily/weekly chores assigned to `uid` (or all assignees), regardless
+    /// of whether they're due today — for the "Recurring" section.
+    func recurringChores(for uid: String? = nil) -> [Chore] {
+        chores
+            .filter { chore in
+                if let uid, chore.assignedToUID != uid { return false }
+                return chore.recurrence != .once
+            }
+            .sorted { $0.title < $1.title }
+    }
+
+    /// Completion history for `uid` (or all assignees), most recent first —
+    /// for the "Past" section.
+    func pastCompletions(for uid: String? = nil) -> [ChoreCompletion] {
+        completions
+            .filter { completion in
+                guard let uid else { return true }
+                return completion.completedByUID == uid
+            }
+            .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+    }
+
     func isCompletedToday(_ chore: Chore) -> Bool {
         let today = ChoreService.dayString(Date())
         return completions.contains { $0.choreId == chore.id && $0.scheduledDate == today }

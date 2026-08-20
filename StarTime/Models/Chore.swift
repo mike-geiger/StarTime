@@ -30,4 +30,23 @@ struct Chore: Identifiable, Codable, Equatable {
         "book.fill", "washer.fill", "trash.fill", "leaf.fill",
         "car.fill", "backpack.fill", "paintbrush.fill", "house.fill"
     ]
+
+    /// Human-readable recurrence schedule ("Daily", "Mon, Wed, Fri"). Not
+    /// meaningful for `.once` chores, which aren't recurring.
+    var scheduleDescription: String {
+        switch recurrence {
+        case .once:
+            return ""
+        case .daily:
+            return "Daily"
+        case .weekly:
+            // Calendar's weekday symbol arrays are always Sunday-first
+            // (index 0 = Sunday), matching the 0 = Sunday convention used
+            // for `weeklyDays` elsewhere (see ChoreStore.choresDueToday).
+            let symbols = Calendar.current.shortWeekdaySymbols
+            return weeklyDays.sorted()
+                .compactMap { symbols.indices.contains($0) ? symbols[$0] : nil }
+                .joined(separator: ", ")
+        }
+    }
 }

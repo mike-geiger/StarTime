@@ -15,16 +15,14 @@ struct ChoresView: View {
             List {
                 if isParent {
                     ForEach(childMembers, id: \.uid) { child in
-                        Section(child.name) {
-                            choreRows(for: choreStore.choresDueToday(for: child.uid))
-                        }
+                        assigneeSections(for: child.uid, name: child.name)
                     }
                     if childMembers.isEmpty {
                         Text("Invite a child from Settings to start assigning chores.")
                             .foregroundStyle(.secondary)
                     }
                 } else if let myUID = auth.user?.uid {
-                    choreRows(for: choreStore.choresDueToday(for: myUID))
+                    assigneeSections(for: myUID, name: householdStore.profile?.name ?? "My")
                 }
             }
             .navigationTitle("Chores")
@@ -45,6 +43,19 @@ struct ChoresView: View {
     }
 
     @ViewBuilder
+    private func assigneeSections(for uid: String, name: String) -> some View {
+        Section("\(name) — Active") {
+            choreRows(for: choreStore.choresDueToday(for: uid))
+        }
+        Section("\(name) — Recurring") {
+            recurringRows(for: choreStore.recurringChores(for: uid))
+        }
+        Section("\(name) — Past") {
+            pastRows(for: choreStore.pastCompletions(for: uid))
+        }
+    }
+
+    @ViewBuilder
     private func choreRows(for chores: [Chore]) -> some View {
         if chores.isEmpty {
             Text("Nothing due today 🎉")
@@ -54,6 +65,84 @@ struct ChoresView: View {
                 choreRow(chore)
             }
         }
+    }
+
+    @ViewBuilder
+    private func recurringRows(for chores: [Chore]) -> some View {
+        if chores.isEmpty {
+            Text("No recurring chores yet")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(chores) { chore in
+                recurringChoreRow(chore)
+            }
+        }
+    }
+
+    /// `recurringChoreRow-<id>` is set on this row's `HStack`, the same
+    /// pattern `pendingRedemptionRow-<id>` uses in RewardsView — SwiftUI
+    /// doesn't reliably surface a `List` row container's identifier to
+    /// `app.otherElements`, so a future UI test should query by visible
+    /// text instead (see `StarTimeUITests.queuedRequest`).
+    private func recurringChoreRow(_ chore: Chore) -> some View {
+        HStack {
+            Image(systemName: chore.icon)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(chore.title)
+                Text(chore.scheduleDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text("\(chore.points) pts")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("recurringChoreRow-\(chore.id ?? "")")
+    }
+
+    @ViewBuilder
+    private func pastRows(for completions: [ChoreCompletion]) -> some View {
+        if completions.isEmpty {
+            Text("No completions yet")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(completions) { completion in
+                pastCompletionRow(completion)
+            }
+        }
+    }
+
+    /// `pastCompletionRow-<id>` has the same container-identifier caveat as
+    /// `recurringChoreRow-<id>` above.
+    private func pastCompletionRow(_ completion: ChoreCompletion) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(completion.choreTitle)
+                Text(relativeDateString(for: completion.completedAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text("\(completion.pointsAwarded) pts")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("pastCompletionRow-\(completion.id ?? "")")
+    }
+
+    private func relativeDateString(for date: Date?) -> String {
+        guard let date else { return "" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     private var childMembers: [(uid: String, name: String)] {
