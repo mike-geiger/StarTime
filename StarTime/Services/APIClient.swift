@@ -34,6 +34,16 @@ final class APIClient {
         // effectively forever.
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
+        // `.default` respects HTTP caching via the shared URLCache. This
+        // backend never sends Cache-Control headers, but URLCache's
+        // heuristic caching can still serve a stale response for a
+        // fixed-URL GET (no query string) like `GET /chores` -- which is
+        // exactly the endpoint an edited chore's own fields depend on to
+        // ever show up again. Every store here already does its own
+        // explicit refetch-after-mutation, so HTTP-level caching can only
+        // reintroduce staleness it was specifically built to avoid.
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.urlCache = nil
         return URLSession(configuration: config)
     }()
 
@@ -58,7 +68,27 @@ final class APIClient {
         return decoder
     }()
 
-    private static let encoder = JSONEncoder()
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        // Must match `decoder`'s format (ISO8601 with fractional seconds),
+        // not the default `.deferredToDate` (a raw number). Otherwise a
+        // struct that was *decoded* from a response -- any edit of an
+        // existing record, which carries a real `createdAt` -- re-encodes
+        // that field as a number on the way back out. The write itself
+        // still succeeds (DynamoDB stores whatever it's given), but the
+        // next GET response then has a number where `decoder` requires a
+        // string, so the whole decode throws -- silently, since background
+        // refetch failures are swallowed by design -- and the published
+        // state simply never updates again. A single mis-typed field took
+        // down decoding for the entire response it was part of.
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(formatter.string(from: date))
+        }
+        return encoder
+    }()
 
     @discardableResult
     func send<Response: Decodable>(

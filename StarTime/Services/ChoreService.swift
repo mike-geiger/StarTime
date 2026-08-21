@@ -61,4 +61,43 @@ struct ChoreService {
             return false
         }
     }
+
+    /// Every checklist chore's checked items for one day, across the
+    /// household — needed so a fresh launch or a second device can render
+    /// checkboxes reflecting what's already checked.
+    @MainActor
+    func fetchChecklistProgress(scheduledDate: String) async throws -> [ChoreChecklistProgress] {
+        struct Response: Decodable { let checklists: [ChoreChecklistProgress] }
+        return try await api.send("GET", "chores/checklist?scheduledDate=\(scheduledDate)", as: Response.self).checklists
+    }
+
+    /// Checks one item. The server credits the chore's points, exactly
+    /// once, if this happens to be the item that completes the set — see
+    /// design.md for why that's safe under concurrent checks.
+    @MainActor
+    func checkChecklistItem(choreId: String, itemId: String, scheduledDate: String) async throws {
+        try await api.send("POST", "chores/\(choreId)/checklist/items/\(itemId)/check?scheduledDate=\(scheduledDate)")
+    }
+
+    /// Unchecks one item. Any household member may do this, including the
+    /// assignee themselves. If the chore had already completed today, this
+    /// reverses it — the points are debited back in full, uncapped.
+    @MainActor
+    func uncheckChecklistItem(choreId: String, itemId: String, scheduledDate: String, note: String?) async throws {
+        struct Body: Encodable { let note: String? }
+        try await api.send(
+            "POST",
+            "chores/\(choreId)/checklist/items/\(itemId)/uncheck?scheduledDate=\(scheduledDate)",
+            body: Body(note: note)
+        )
+    }
+
+    /// Explicitly completes a checklist chore whose checked items already
+    /// satisfy every currently-required item — the case where editing the
+    /// item list left nothing left to check, so there's no item tap to
+    /// trigger completion on its own.
+    @MainActor
+    func completeChecklist(choreId: String, scheduledDate: String) async throws {
+        try await api.send("POST", "chores/\(choreId)/checklist/complete?scheduledDate=\(scheduledDate)")
+    }
 }

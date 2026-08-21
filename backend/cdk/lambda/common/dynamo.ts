@@ -28,4 +28,9 @@ export const Keys = {
     PK: `HOUSEHOLD#${householdId}`,
     SK: `COMPLETEDON#${choreId}#${scheduledDate}`,
   }),
+  /** A checklist chore's per-day progress: which items are checked so far. */
+  checklistProgress: (householdId: string, choreId: string, scheduledDate: string) => ({
+    PK: `HOUSEHOLD#${householdId}`,
+    SK: `CHECKLIST#${choreId}#${scheduledDate}`,
+  }),
 };

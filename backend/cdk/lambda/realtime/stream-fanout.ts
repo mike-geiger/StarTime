@@ -19,6 +19,9 @@ const management = new ApiGatewayManagementApiClient({
 function resourceFor(sortKey: string): string | null {
   if (sortKey === 'METADATA') return 'household';
   if (sortKey.startsWith('CHORE#')) return 'chores';
+  // Checklist progress rides the same invalidation as chores -- ChoreStore
+  // already refetches both chores and completions on it.
+  if (sortKey.startsWith('CHECKLIST#')) return 'chores';
   if (sortKey.startsWith('COMPLETION#')) return 'completions';
   if (sortKey.startsWith('REWARD#')) return 'rewards';
   if (sortKey.startsWith('REDEMPTION#')) return 'redemptions';

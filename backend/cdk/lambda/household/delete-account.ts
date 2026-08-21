@@ -108,11 +108,14 @@ export const handler: APIGatewayProxyHandler = async (event) => {
           // doc is deleted last so a failure partway through still leaves a
           // household to retry against rather than orphaned children.
           // COMPLETEDON# are the once-per-day markers from record-completion;
-          // they live under the household PK but outside the COMPLETION#
-          // range, so they need naming explicitly or they'd be orphaned.
+          // CHECKLIST# is a checklist chore's per-day checked-item progress.
+          // Both live under the household PK but outside every other
+          // prefix's range, so they need naming explicitly or they'd be
+          // orphaned.
           for (const prefix of [
             'COMPLETION#',
             'COMPLETEDON#',
+            'CHECKLIST#',
             'REDEMPTION#',
             'CHORE#',
             'REWARD#',

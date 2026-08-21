@@ -577,6 +577,252 @@ final class StarTimeUITests: XCTestCase {
         tearDownAccounts(app: app, accounts: accounts)
     }
 
+    /// Checking every item completes a checklist chore and credits its
+    /// points exactly once -- not per item.
+    @MainActor
+    func testStage7CheckingEveryChecklistItemCompletesAndCreditsOnce() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpChildWithChecklistChore(app: app, prefix: "checklist7a")
+
+        let checkboxes = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'checklistItemCheckbox-'"))
+        XCTAssertEqual(checkboxes.count, 3, "Should render one checkbox per checklist item")
+
+        checkboxes.element(boundBy: 0).tap()
+        checkboxes.element(boundBy: 1).tap()
+        checkboxes.element(boundBy: 2).tap()
+
+        XCTAssertTrue(app.staticTexts["3/3"].waitForExistence(timeout: 10), "Progress should read 3/3 once every item is checked")
+
+        tapTab(app, "Rewards")
+        XCTAssertTrue(
+            app.staticTexts["10"].waitForExistence(timeout: 10),
+            "Completing the checklist should credit its 10 points exactly once"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// No points until the last item closes the set -- a partially-checked
+    /// checklist earns nothing.
+    @MainActor
+    func testStage7PartialChecklistDoesNotCreditUntilTheLastItem() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpChildWithChecklistChore(app: app, prefix: "checklist7b")
+
+        let checkboxes = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'checklistItemCheckbox-'"))
+        checkboxes.element(boundBy: 0).tap()
+        checkboxes.element(boundBy: 1).tap()
+        XCTAssertTrue(app.staticTexts["2/3"].waitForExistence(timeout: 10))
+
+        tapTab(app, "Rewards")
+        XCTAssertTrue(app.staticTexts["0"].waitForExistence(timeout: 10), "No points yet with one item still unchecked")
+
+        tapTab(app, "Chores")
+        checkboxes.element(boundBy: 2).tap()
+        XCTAssertTrue(app.staticTexts["3/3"].waitForExistence(timeout: 10))
+
+        tapTab(app, "Rewards")
+        XCTAssertTrue(
+            app.staticTexts["10"].waitForExistence(timeout: 10),
+            "Checking the last item should credit the full 10 points"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Unchecking an item after the checklist already completed reverses it
+    /// -- confirmed first, since it takes points back -- and the checklist
+    /// can be completed again afterward.
+    @MainActor
+    func testStage7UncheckingAfterCompletionReversesAndCanBeRedone() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpChildWithChecklistChore(app: app, prefix: "checklist7c")
+
+        let checkboxes = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'checklistItemCheckbox-'"))
+        checkboxes.element(boundBy: 0).tap()
+        checkboxes.element(boundBy: 1).tap()
+        checkboxes.element(boundBy: 2).tap()
+
+        tapTab(app, "Rewards")
+        XCTAssertTrue(app.staticTexts["10"].waitForExistence(timeout: 10))
+
+        tapTab(app, "Chores")
+        checkboxes.element(boundBy: 0).tap() // unchecking a completed item is a reversal
+
+        let confirm = app.buttons["Undo and take back 10 points"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Unchecking a completed checklist item should confirm before taking points back")
+        confirm.tap()
+
+        tapTab(app, "Rewards")
+        XCTAssertTrue(app.staticTexts["0"].waitForExistence(timeout: 10), "Reversal should take the points back")
+
+        tapTab(app, "Chores")
+        checkboxes.element(boundBy: 0).tap() // re-check it
+
+        tapTab(app, "Rewards")
+        XCTAssertTrue(
+            app.staticTexts["10"].waitForExistence(timeout: 10),
+            "Re-checking every item should complete and credit again"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// The reversal's optional note is durable: it shows on the history
+    /// entry, not just in a notification that could be missed. Reversing
+    /// here is done by the parent, since any household member may do it.
+    @MainActor
+    func testStage7ParentReversesWithANoteAndItShowsInHistory() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithChecklistChore(app: app, prefix: "checklist7d")
+
+        let checkboxes = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'checklistItemCheckbox-'"))
+        checkboxes.element(boundBy: 0).tap()
+        checkboxes.element(boundBy: 1).tap()
+        checkboxes.element(boundBy: 2).tap()
+        XCTAssertTrue(app.staticTexts["3/3"].waitForExistence(timeout: 10))
+
+        checkboxes.element(boundBy: 0).tap() // parent reverses on Kiddo's behalf
+
+        let noteField = app.textFields["Note (optional)"]
+        XCTAssertTrue(noteField.waitForExistence(timeout: 5), "Reversing a completed item should offer an optional note")
+        noteField.tap()
+        noteField.typeText("checked by mistake")
+
+        let confirm = app.buttons["Undo and take back 10 points"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+
+        XCTAssertTrue(
+            app.staticTexts["Undone"].waitForExistence(timeout: 10),
+            "The reversed completion should show in history, marked undone"
+        )
+        XCTAssertTrue(
+            app.staticTexts["checked by mistake"].waitForExistence(timeout: 5),
+            "The reversal note should show alongside the history entry"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// A reversal without a note still succeeds and still shows in history --
+    /// the note is optional, not a requirement to undo. Done by Kiddo on
+    /// their own completed chore (any household member may reverse,
+    /// including the assignee themselves), which is also what
+    /// `ChoreCompletionReversalNotifier` depends on to alert the right
+    /// person: this checks the durable data that notifier reads
+    /// (`completedByUID` == the reversing member, `reversedAt` set, no
+    /// note) reaches history correctly. The notification banner itself
+    /// isn't asserted here -- no test in this suite inspects actual
+    /// delivered notification content, for either reversal notifier.
+    @MainActor
+    func testStage7SelfReversalWithoutANoteStillShowsUndone() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpChildWithChecklistChore(app: app, prefix: "checklist7f")
+
+        let checkboxes = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'checklistItemCheckbox-'"))
+        checkboxes.element(boundBy: 0).tap()
+        checkboxes.element(boundBy: 1).tap()
+        checkboxes.element(boundBy: 2).tap()
+        XCTAssertTrue(app.staticTexts["3/3"].waitForExistence(timeout: 10))
+
+        checkboxes.element(boundBy: 0).tap() // Kiddo undoes their own completed item
+
+        let confirm = app.buttons["Undo and take back 10 points"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Reversing should offer to confirm even without typing a note")
+        confirm.tap() // no note entered
+
+        XCTAssertTrue(
+            app.staticTexts["Undone"].waitForExistence(timeout: 10),
+            "A note-less self-reversal should still show in history, marked undone"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Editing a checklist's items never auto-completes it; the explicit
+    /// "Mark Complete" action is what's needed once an edit leaves the
+    /// checked items already covering what's left required.
+    @MainActor
+    func testStage7EditingItemsDoesNotAutoCompleteMarkCompleteDoes() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithChecklistChore(app: app, prefix: "checklist7e")
+
+        let checkboxes = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'checklistItemCheckbox-'"))
+        checkboxes.element(boundBy: 0).tap()
+        checkboxes.element(boundBy: 1).tap()
+        // The 3rd item ("Practice piano") is deliberately left unchecked.
+        XCTAssertTrue(app.staticTexts["2/3"].waitForExistence(timeout: 10))
+
+        // Edit the chore, removing the still-unchecked 3rd item -- the
+        // checked set (items 0, 1) now covers everything left required.
+        let choreTitle = app.staticTexts["Morning Chores"].firstMatch
+        XCTAssertTrue(choreTitle.waitForExistence(timeout: 5))
+        choreTitle.tap()
+
+        XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5), "Tapping the chore as a parent should open the editor")
+        // Also bump points in the same edit -- narrows whether a save
+        // failing to persist is specific to checklist items, or every
+        // field of an existing-chore edit silently fails to round-trip.
+        app.steppers.firstMatch.buttons["Increment"].tap()
+        let deleteLastItemButton = app.buttons["checklistItemDeleteButton-2"]
+        XCTAssertTrue(deleteLastItemButton.waitForExistence(timeout: 5))
+        deleteLastItemButton.tap()
+        app.buttons["Save"].tap()
+
+        if app.staticTexts["Something went wrong"].waitForExistence(timeout: 3) {
+            XCTFail("Save reported an error: \(app.alerts.staticTexts.element(boundBy: 1).label)")
+        }
+        XCTAssertTrue(app.staticTexts["Morning Chores"].waitForExistence(timeout: 10))
+
+        // A single checklist chore shows its title exactly twice (once in
+        // Active, once in Recurring) -- more than that means save() took
+        // the create branch instead of update, leaving the original
+        // untouched and adding a second, separate chore.
+        let allTitles = app.staticTexts.matching(NSPredicate(format: "label == 'Morning Chores'"))
+        XCTAssertEqual(allTitles.count, 2, "Expected exactly one chore (title shown twice: Active + Recurring), found \(allTitles.count) occurrences -- possible duplicate chore")
+
+        // Reopen the editor and count fields directly -- isolates whether
+        // the save itself round-tripped 2 items, independent of whatever
+        // computes the "checked/total" progress text shown on the row.
+        app.staticTexts["Morning Chores"].firstMatch.tap()
+        XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5), "Reopening the chore should open the editor")
+        XCTAssertTrue(app.staticTexts["Points: 11"].waitForExistence(timeout: 5), "The points bump from the same edit should also have persisted")
+        let fieldsAfterSave = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH 'checklistItemTitleField-'"))
+        let valuesAfterSave = (0..<fieldsAfterSave.count).map { fieldsAfterSave.element(boundBy: $0).value as? String ?? "?" }
+        XCTAssertEqual(fieldsAfterSave.count, 2, "The saved chore should have 2 items, not 3, when reopened -- actual field contents: \(valuesAfterSave)")
+        app.buttons["Cancel"].tap()
+
+        // Confirms editing alone did not auto-complete it -- a weaker
+        // "not 3/3" check can't tell a genuinely-deleted item apart from a
+        // delete that silently failed to persist, since 2/3 also isn't "3/3".
+        XCTAssertTrue(app.staticTexts["2/2"].waitForExistence(timeout: 10), "Should show 2/2 after removing the 3rd item, confirming the delete landed")
+
+        let markComplete = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'markChecklistCompleteButton-'")).firstMatch
+        XCTAssertTrue(markComplete.waitForExistence(timeout: 10), "Mark Complete should appear once editing leaves the checklist already satisfied")
+        markComplete.tap()
+
+        tapTab(app, "Rewards")
+        XCTAssertTrue(
+            app.staticTexts["11"].waitForExistence(timeout: 10),
+            "The explicit Mark Complete action should credit the chore's points (11, after the points bump earlier in this edit)"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
     /// The queued request, found by the text it renders rather than by the
     /// row's accessibility identifier.
     ///
@@ -706,6 +952,136 @@ final class StarTimeUITests: XCTestCase {
         deleteCurrentAccount(app: app)
     }
 
+    /// Leaves the app signed in as the parent, on the Chores tab, with one
+    /// checklist chore ("Morning Chores": Brush teeth, Eat breakfast,
+    /// Practice piano — 10 points by default) assigned to Kiddo and not yet
+    /// checked.
+    private func setUpParentWithChecklistChore(
+        app: XCUIApplication,
+        prefix: String,
+        itemTitles: [String] = ["Brush teeth", "Eat breakfast", "Practice piano"]
+    ) -> (parentEmail: String, childEmail: String, password: String) {
+        resetToSignedOutState(app: app)
+
+        let runId = Int(Date().timeIntervalSince1970)
+        let parentEmail = "parent-\(prefix)-\(runId)@example.com"
+        let childEmail = "child-\(prefix)-\(runId)@example.com"
+        let password = "TestPassword123!"
+
+        signUp(app: app, email: parentEmail, password: password)
+
+        let createHouseholdButton = app.buttons["Create a household"]
+        XCTAssertTrue(createHouseholdButton.waitForExistence(timeout: 15))
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+        createHouseholdButton.tap()
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 5))
+        app.textFields["Your name"].tap()
+        app.textFields["Your name"].typeText("Dad")
+        app.textFields["Household name (e.g. \"The Geigers\")"].tap()
+        app.textFields["Household name (e.g. \"The Geigers\")"].typeText("The Geigers")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Chores"].waitForExistence(timeout: 15))
+        tapTab(app, "Settings")
+
+        app.buttons["Invite a child"].tap()
+        let codeText = app.staticTexts.matching(identifier: "generatedInviteCode").firstMatch
+        XCTAssertTrue(codeText.waitForExistence(timeout: 10))
+        let inviteCode = codeText.label
+
+        app.buttons["Sign Out"].tap()
+
+        signUp(app: app, email: childEmail, password: password)
+
+        let joinButton = app.buttons["Join with an invite code"]
+        XCTAssertTrue(joinButton.waitForExistence(timeout: 15))
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+        joinButton.tap()
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 5))
+        app.textFields["Your name"].tap()
+        app.textFields["Your name"].typeText("Kiddo")
+        app.textFields["Invite code"].tap()
+        app.textFields["Invite code"].typeText(inviteCode)
+        app.buttons["Join"].tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Chores"].waitForExistence(timeout: 15))
+        resetToSignedOutState(app: app)
+
+        // --- Parent creates the checklist chore ---
+        signIn(app: app, email: parentEmail, password: password)
+        tapTab(app, "Chores")
+        // The Save Password prompt can appear with a delay after sign-in
+        // (see dismissSavePasswordPromptIfPresent's own doc comment) --
+        // late enough that it can still be covering the screen here, an
+        // action or two after signIn's own dismiss attempt.
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        tapAddButton(app: app)
+        XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5))
+        app.textFields["Title"].tap()
+        app.textFields["Title"].typeText("Morning Chores")
+        dismissKeyboard(app)
+
+        let incrementButton = app.steppers.firstMatch.buttons["Increment"]
+        XCTAssertTrue(incrementButton.waitForExistence(timeout: 5))
+        for _ in 0..<5 { incrementButton.tap() } // 5 -> 10 pts
+
+        let checklistToggle = app.switches["Use a checklist"]
+        XCTAssertTrue(checklistToggle.waitForExistence(timeout: 5))
+        // SwiftUI's Toggle in a Form row produces a *nested* accessibility
+        // structure: an outer row-wide Switch (labeled "Use a checklist",
+        // reported `isHittable == false`) wrapping a StaticText and a
+        // second, unlabeled inner Switch positioned exactly on the visual
+        // knob -- that inner one is the real native control that responds
+        // to touches. `app.switches["Use a checklist"]` matches the outer
+        // wrapper, which is why every tap technique on it silently did
+        // nothing (confirmed directly via its own `.value` staying "0").
+        checklistToggle.switches.firstMatch.tap()
+        XCTAssertEqual(checklistToggle.value as? String, "1", "Toggle should be on after tapping its switch")
+
+        let addItemButton = app.buttons["Add item"]
+        for (index, title) in itemTitles.enumerated() {
+            // Revealed by the toggle above (or, on later iterations, pushed
+            // down the Form by the previous row) -- not present at the
+            // moment of the tap that reveals/relocates it, so this needs an
+            // explicit wait like every other conditionally-shown control in
+            // this file, not a bare `.tap()`.
+            XCTAssertTrue(addItemButton.waitForExistence(timeout: 5), "Add item button should appear")
+            addItemButton.tap()
+            let field = app.textFields["checklistItemTitleField-\(index)"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap()
+            field.typeText(title)
+            dismissKeyboard(app) // else the next "Add item" tap can land on a still-open keyboard
+        }
+
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Chores"].waitForExistence(timeout: 10))
+
+        return (parentEmail, childEmail, password)
+    }
+
+    /// Same setup as `setUpParentWithChecklistChore`, but leaves the app
+    /// signed in as Kiddo instead, on the Chores tab.
+    private func setUpChildWithChecklistChore(
+        app: XCUIApplication,
+        prefix: String,
+        itemTitles: [String] = ["Brush teeth", "Eat breakfast", "Practice piano"]
+    ) -> (parentEmail: String, childEmail: String, password: String) {
+        let accounts = setUpParentWithChecklistChore(app: app, prefix: prefix, itemTitles: itemTitles)
+        resetToSignedOutState(app: app)
+        signIn(app: app, email: accounts.childEmail, password: accounts.password)
+        tapTab(app, "Chores")
+        // Same delayed-prompt reasoning as in setUpParentWithChecklistChore.
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+        XCTAssertTrue(app.staticTexts["Morning Chores"].waitForExistence(timeout: 10))
+        return accounts
+    }
+
     /// Opens the add-chore/add-reward sheet, retrying the tap (same stale
     /// hit-point issue as tab bar taps) until the sheet's Cancel button
     /// actually appears, rather than trusting a single tap succeeded.
@@ -728,6 +1104,20 @@ final class StarTimeUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.4)
         }
         XCTAssertTrue(cancelButton.waitForExistence(timeout: 2), "Add sheet should open after repeated taps")
+    }
+
+    /// Taps the navigation bar (a safe, always-visible, non-interactive
+    /// point regardless of scroll position) to resign a text field's first
+    /// responder. `AddEditChoreView`'s Form is tall enough (Chore, Icon,
+    /// Repeats, Checklist, Assigned to) that a keyboard left open from an
+    /// earlier field can occlude a lower section's controls entirely —
+    /// which is exactly what "Failed to tap 'Add item' Button: No matches
+    /// found" turned out to mean the first time this ran: the query wasn't
+    /// wrong, the keyboard was still covering it.
+    private func dismissKeyboard(_ app: XCUIApplication) {
+        if app.keyboards.element.exists {
+            app.navigationBars.firstMatch.tap()
+        }
     }
 
     /// Tab bar taps immediately after a screen transition (sign-in, sign-up,

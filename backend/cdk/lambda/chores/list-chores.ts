@@ -23,7 +23,13 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       })
     );
 
-    return json(200, { chores: result.Items ?? [] });
+    // A chore written before checklist items existed has no `items`
+    // attribute at all -- default it on read, the same "absence defaults
+    // to the pre-feature meaning" rule as a status-less redemption, rather
+    // than backfilling every existing row.
+    const chores = (result.Items ?? []).map((item) => ({ ...item, items: item.items ?? [] }));
+
+    return json(200, { chores });
   } catch (error) {
     return errorResponse(error);
   }

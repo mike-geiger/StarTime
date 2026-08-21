@@ -67,8 +67,11 @@ struct ProgressTabView: View {
         return (0..<7).reversed().map { offset in
             let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
             let dayString = ChoreService.dayString(day)
+            // A reversed completion's points were debited back off the
+            // balance, so it must not still show up here -- otherwise this
+            // chart would diverge from what Rewards actually shows.
             let points = choreStore.completions
-                .filter { $0.completedByUID == uid && $0.scheduledDate == dayString }
+                .filter { $0.completedByUID == uid && $0.scheduledDate == dayString && !$0.isReversed }
                 .reduce(0) { $0 + $1.pointsAwarded }
             return (day: day, points: points)
         }

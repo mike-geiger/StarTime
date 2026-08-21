@@ -74,17 +74,28 @@ ws.addEventListener('close', (event) => {
   closeInfo = `code=${event.code} reason=${event.reason || '(none)'}`;
 });
 
-const received = new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error('no invalidation within 30s')), 30_000);
-  ws.addEventListener('message', (event) => {
-    clearTimeout(timer);
-    resolve(JSON.parse(event.data));
+// Reusable per-wait: each call arms a fresh listener so this can be used
+// more than once on the same socket (once per write under test).
+function waitForInvalidation() {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('no invalidation within 30s')), 30_000);
+    const onMessage = (event) => {
+      cleanup();
+      resolve(JSON.parse(event.data));
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`WebSocket error ${closeInfo ?? '(no close frame)'}`));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeEventListener('message', onMessage);
+      ws.removeEventListener('error', onError);
+    };
+    ws.addEventListener('message', onMessage);
+    ws.addEventListener('error', onError);
   });
-  ws.addEventListener('error', () => {
-    clearTimeout(timer);
-    reject(new Error(`WebSocket error ${closeInfo ?? '(no close frame)'}`));
-  });
-});
+}
 
 await new Promise((resolve, reject) => {
   ws.addEventListener('open', resolve);
@@ -99,6 +110,7 @@ await new Promise((resolve, reject) => {
 console.log('   connected');
 
 console.log('4. writing a chore over REST');
+const choreWritten = waitForInvalidation(); // armed before the write, not after
 await api('POST', 'chores', {
   title: 'Realtime probe',
   icon: 'sparkles',
@@ -111,14 +123,50 @@ await api('POST', 'chores', {
 
 console.log('5. waiting for pushed invalidation...');
 try {
-  const message = await received;
+  const message = await choreWritten;
   console.log('   received:', JSON.stringify(message));
   if (message.type !== 'invalidate' || !message.resources?.includes('chores')) {
     fail(`unexpected payload: ${JSON.stringify(message)}`);
   }
-  console.log('REALTIME OK');
-  ws.close();
-  process.exit(0);
 } catch (error) {
   fail(error.message);
 }
+
+// A checklist chore's progress lives under a CHECKLIST# sort key, not
+// CHORE# or COMPLETION# -- stream-fanout.ts has to classify that prefix
+// explicitly (as the "chores" resource) or this invalidation is silently
+// dropped, and a second device's checkboxes would just never update.
+console.log('6. checking a checklist item over REST (isolated: one item on a');
+console.log('   two-item chore, so this write touches only CHECKLIST#, no');
+console.log('   COMPLETION#/BALANCE# writes to muddy which prefix triggered it)');
+const checklistChore = await api('POST', 'chores', {
+  title: 'Checklist realtime probe',
+  icon: 'sparkles',
+  points: 5,
+  recurrence: 'daily',
+  weeklyDays: [],
+  assignedToUID: 'someone',
+  isActive: true,
+  items: [
+    { id: 'a', title: 'First' },
+    { id: 'b', title: 'Second' },
+  ],
+});
+const checklistChoreId = checklistChore.chore.id;
+
+const itemChecked = waitForInvalidation();
+await api('POST', `chores/${checklistChoreId}/checklist/items/a/check?scheduledDate=2026-08-05`);
+
+try {
+  const message = await itemChecked;
+  console.log('   received:', JSON.stringify(message));
+  if (message.type !== 'invalidate' || !message.resources?.includes('chores')) {
+    fail(`unexpected payload: ${JSON.stringify(message)}`);
+  }
+} catch (error) {
+  fail(error.message);
+}
+
+console.log('REALTIME OK');
+ws.close();
+process.exit(0);

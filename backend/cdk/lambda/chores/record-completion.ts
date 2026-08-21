@@ -67,6 +67,12 @@ export const handler: APIGatewayProxyHandler = async (event) => {
                   choreId,
                   scheduledDate,
                   completionId: id,
+                  // Combined with completionId, reconstructs the completion's
+                  // exact SK (COMPLETION#{completedAt}#{completionId}) for a
+                  // point lookup -- see checklist reversal, which needs to
+                  // find and update a specific completion without a range
+                  // query.
+                  completedAt,
                 },
                 ConditionExpression: 'attribute_not_exists(PK)',
               },

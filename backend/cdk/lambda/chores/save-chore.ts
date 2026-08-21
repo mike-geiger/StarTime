@@ -17,9 +17,38 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     const body = JSON.parse(event.body ?? '{}');
     const choreId = event.pathParameters?.choreId ?? randomUUID();
 
-    const { title, icon, points, recurrence, weeklyDays, assignedToUID, isActive } = body;
+    const { title, icon, points, recurrence, weeklyDays, assignedToUID, isActive, items } = body;
     if (!title || !icon || typeof points !== 'number' || !recurrence || !assignedToUID) {
       throw new HttpError(400, 'title, icon, points, recurrence and assignedToUID are required');
+    }
+
+    // Checklist items are optional and, when present, gate this chore's
+    // completion (see check-checklist-item.ts) instead of a single tap.
+    // Ids are generated client-side -- there's no per-item endpoint, items
+    // travel through this whole-object overwrite -- so this only validates
+    // shape, never assigns ids of its own.
+    const choreItems: { id: string; title: string }[] = [];
+    if (items !== undefined) {
+      if (!Array.isArray(items)) {
+        throw new HttpError(400, 'items must be an array');
+      }
+      const seenIds = new Set<string>();
+      for (const entry of items) {
+        if (
+          !entry ||
+          typeof entry.id !== 'string' ||
+          !entry.id ||
+          typeof entry.title !== 'string' ||
+          !entry.title
+        ) {
+          throw new HttpError(400, 'each checklist item requires a non-empty id and title');
+        }
+        if (seenIds.has(entry.id)) {
+          throw new HttpError(400, 'checklist item ids must be unique');
+        }
+        seenIds.add(entry.id);
+        choreItems.push({ id: entry.id, title: entry.title });
+      }
     }
 
     const item = {
@@ -32,6 +61,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       weeklyDays: weeklyDays ?? [],
       assignedToUID,
       isActive: isActive ?? true,
+      items: choreItems,
       createdAt: body.createdAt ?? new Date().toISOString(),
     };
 

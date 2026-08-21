@@ -13,6 +13,14 @@ struct AddEditChoreView: View {
     @State private var recurrence: Chore.Recurrence = .daily
     @State private var weeklyDays: Set<Int> = []
     @State private var assignedToUID = ""
+    @State private var isChecklist = false
+    @State private var items: [Chore.ChecklistItem] = []
+
+    /// Items with real content — a blank row left over from tapping "Add
+    /// item" without filling it in doesn't count as part of the checklist.
+    private var nonBlankItems: [Chore.ChecklistItem] {
+        items.filter { !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
 
     private static let weekdaySymbols = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
@@ -73,6 +81,48 @@ struct AddEditChoreView: View {
                     }
                 }
 
+                Section("Checklist") {
+                    Toggle("Use a checklist", isOn: $isChecklist)
+                    if isChecklist {
+                        // Every row shares the "Item" placeholder, so a UI
+                        // test can't tell them apart by label alone — indexed
+                        // by position, since a freshly-added item's UUID
+                        // isn't known ahead of time.
+                        // An explicit trailing delete button, not swipe-to-
+                        // delete or a forced system edit mode: swiping a row
+                        // whose content is an editable TextField turned out
+                        // to be unreliable (the gesture didn't register),
+                        // and it's an awkward gesture to discover on a text
+                        // field either way. Reordering is via remove-and-
+                        // re-add rather than a drag handle, for the same
+                        // reliability reason.
+                        ForEach(items.indices, id: \.self) { index in
+                            HStack {
+                                TextField("Item", text: $items[index].title)
+                                    .accessibilityIdentifier("checklistItemTitleField-\(index)")
+                                Button {
+                                    items.remove(at: index)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("checklistItemDeleteButton-\(index)")
+                            }
+                        }
+
+                        Button {
+                            items.append(Chore.ChecklistItem(id: UUID().uuidString, title: ""))
+                        } label: {
+                            Label("Add item", systemImage: "plus.circle")
+                        }
+
+                        Text("Points are awarded once, when every item is checked — not per item.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Assigned to") {
                     if childMembers.isEmpty {
                         Text("Invite a child from Settings first.")
@@ -93,7 +143,11 @@ struct AddEditChoreView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
-                        .disabled(title.isEmpty || assignedToUID.isEmpty || (recurrence == .weekly && weeklyDays.isEmpty))
+                        .disabled(
+                            title.isEmpty || assignedToUID.isEmpty
+                                || (recurrence == .weekly && weeklyDays.isEmpty)
+                                || (isChecklist && nonBlankItems.isEmpty)
+                        )
                 }
             }
             .onAppear(perform: populateIfEditing)
@@ -113,6 +167,8 @@ struct AddEditChoreView: View {
         recurrence = chore.recurrence
         weeklyDays = Set(chore.weeklyDays)
         assignedToUID = chore.assignedToUID
+        isChecklist = chore.isChecklist
+        items = chore.items
     }
 
     private func save() {
@@ -123,7 +179,8 @@ struct AddEditChoreView: View {
             recurrence: recurrence,
             weeklyDays: [],
             assignedToUID: assignedToUID,
-            isActive: true
+            isActive: true,
+            items: []
         )
         chore.title = title
         chore.icon = icon
@@ -131,6 +188,10 @@ struct AddEditChoreView: View {
         chore.recurrence = recurrence
         chore.weeklyDays = Array(weeklyDays).sorted()
         chore.assignedToUID = assignedToUID
+        // Editing the list never affects past days — see design.md. Toggling
+        // "Use a checklist" off clears items entirely; toggling it on with
+        // nothing typed yet is blocked by the Save button's disabled state.
+        chore.items = isChecklist ? nonBlankItems : []
 
         if editingChore == nil {
             choreStore.addChore(chore)

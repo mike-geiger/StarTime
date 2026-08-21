@@ -16,6 +16,7 @@ struct MainTabView: View {
     @StateObject private var realtime = RealtimeConnectionManager()
     @StateObject private var pendingNotifier = PendingRedemptionNotifier()
     @StateObject private var reversalNotifier = RewardReversalNotifier()
+    @StateObject private var choreReversalNotifier = ChoreCompletionReversalNotifier()
 
     private var isParent: Bool { householdStore.profile?.role == .parent }
 
@@ -52,6 +53,7 @@ struct MainTabView: View {
             pendingNotifier.start(store: rewardStore, householdId: householdId, isParent: isParent)
             if let uid = auth.user?.uid {
                 reversalNotifier.start(store: rewardStore, householdId: householdId, uid: uid)
+                choreReversalNotifier.start(store: choreStore, householdId: householdId, uid: uid)
             }
             choreStore.start(householdId: householdId)
             rewardStore.start(householdId: householdId)
@@ -88,6 +90,7 @@ struct MainTabView: View {
             // announced, so the next family on this device starts clean.
             pendingNotifier.stop()
             reversalNotifier.stop()
+            choreReversalNotifier.stop()
         }
     }
 }

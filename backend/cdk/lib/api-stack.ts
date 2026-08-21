@@ -89,11 +89,42 @@ export class ApiStack extends Stack {
       authed
     );
     chores.addMethod('POST', saveChore, authed);
+    // A literal sibling of {choreId}; API Gateway matches the exact
+    // segment before falling back to the parameterized resource.
+    chores.addResource('checklist').addMethod(
+      'GET',
+      new LambdaIntegration(
+        lambda('ListChecklistProgress', '../lambda/chores/list-checklist-progress.ts')
+      ),
+      authed
+    );
     const chore = chores.addResource('{choreId}');
     chore.addMethod('PUT', saveChore, authed);
     chore.addMethod(
       'DELETE',
       new LambdaIntegration(lambda('DeleteChore', '../lambda/chores/delete-chore.ts')),
+      authed
+    );
+
+    // Checklist chores: items are checked/unchecked individually, and the
+    // day closes out (crediting points) once every item is checked. The
+    // explicit complete route covers the case where editing the item list
+    // already satisfies the checked set, with no new item check to trigger it.
+    const choreChecklist = chore.addResource('checklist');
+    const checklistItem = choreChecklist.addResource('items').addResource('{itemId}');
+    checklistItem.addResource('check').addMethod(
+      'POST',
+      new LambdaIntegration(lambda('CheckChecklistItem', '../lambda/chores/check-checklist-item.ts')),
+      authed
+    );
+    checklistItem.addResource('uncheck').addMethod(
+      'POST',
+      new LambdaIntegration(lambda('UncheckChecklistItem', '../lambda/chores/uncheck-checklist-item.ts')),
+      authed
+    );
+    choreChecklist.addResource('complete').addMethod(
+      'POST',
+      new LambdaIntegration(lambda('CompleteChecklist', '../lambda/chores/complete-checklist.ts')),
       authed
     );
 

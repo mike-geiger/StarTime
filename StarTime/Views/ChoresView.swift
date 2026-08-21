@@ -7,6 +7,16 @@ struct ChoresView: View {
 
     @State private var showingAddChore = false
     @State private var editingChore: Chore?
+    /// Unchecking an item on an already-completed checklist is a reversal —
+    /// it takes back the points, so it asks first, the same shape
+    /// RewardsView uses for cancel/un-fulfil.
+    @State private var pendingChecklistReversal: PendingChecklistReversal?
+    @State private var checklistReversalNoteDraft = ""
+
+    private struct PendingChecklistReversal {
+        let chore: Chore
+        let item: Chore.ChecklistItem
+    }
 
     private var isParent: Bool { householdStore.profile?.role == .parent }
 
@@ -39,6 +49,46 @@ struct ChoresView: View {
             .sheet(item: $editingChore) { chore in
                 AddEditChoreView(choreStore: choreStore, household: householdStore.household, editingChore: chore)
             }
+        }
+        // Chore mutations (add/edit/delete/check/uncheck) had no error
+        // surfacing at all -- a failed save dismissed its sheet exactly
+        // like a successful one, silently discarding the attempted change.
+        // Mirrors RewardsView's identical alert for RewardStore.
+        .alert(
+            "Something went wrong",
+            isPresented: Binding(
+                get: { choreStore.errorMessage != nil },
+                set: { if !$0 { choreStore.errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { choreStore.errorMessage = nil }
+        } message: {
+            Text(choreStore.errorMessage ?? "")
+        }
+        // `.confirmationDialog` can't host a `TextField`, so the optional
+        // note pushes this to `.alert`, mirroring RewardsView's cancel and
+        // un-fulfil confirmations.
+        .alert(
+            "Undo this item?",
+            isPresented: Binding(
+                get: { pendingChecklistReversal != nil },
+                set: { if !$0 { pendingChecklistReversal = nil; checklistReversalNoteDraft = "" } }
+            ),
+            presenting: pendingChecklistReversal
+        ) { pending in
+            TextField("Note (optional)", text: $checklistReversalNoteDraft)
+            Button("Undo and take back \(pending.chore.points) points", role: .destructive) {
+                let trimmed = checklistReversalNoteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                choreStore.uncheckItem(pending.chore, itemId: pending.item.id, note: trimmed.isEmpty ? nil : trimmed)
+                pendingChecklistReversal = nil
+                checklistReversalNoteDraft = ""
+            }
+            Button("Keep it done", role: .cancel) {
+                pendingChecklistReversal = nil
+                checklistReversalNoteDraft = ""
+            }
+        } message: { pending in
+            Text("\"\(pending.item.title)\" will be unchecked, and \(pending.chore.points) points will be taken back.")
         }
     }
 
@@ -124,9 +174,21 @@ struct ChoresView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(completion.choreTitle)
+                    .strikethrough(completion.isReversed)
                 Text(relativeDateString(for: completion.completedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if completion.isReversed {
+                    Label("Undone", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let note = completion.reversalNote, !note.isEmpty {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .italic()
+                }
             }
 
             Spacer()
@@ -155,6 +217,15 @@ struct ChoresView: View {
 
     @ViewBuilder
     private func choreRow(_ chore: Chore) -> some View {
+        if chore.isChecklist {
+            checklistChoreRow(chore)
+        } else {
+            simpleChoreRow(chore)
+        }
+    }
+
+    @ViewBuilder
+    private func simpleChoreRow(_ chore: Chore) -> some View {
         let done = choreStore.isCompletedToday(chore)
         let streak = choreStore.streak(for: chore)
 
@@ -198,6 +269,100 @@ struct ChoresView: View {
             if isParent {
                 Button("Delete", role: .destructive) { choreStore.deleteChore(chore) }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func checklistChoreRow(_ chore: Chore) -> some View {
+        let done = choreStore.isCompletedToday(chore)
+        let streak = choreStore.streak(for: chore)
+        let checkedCount = chore.items.filter { choreStore.isChecklistItemChecked(chore, itemId: $0.id) }.count
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: chore.icon)
+                    .foregroundStyle(.tint)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(chore.title)
+                        .strikethrough(done)
+                    HStack(spacing: 6) {
+                        Text("\(chore.points) pts")
+                        Text("\(checkedCount)/\(chore.items.count)")
+                        if streak > 0 {
+                            Label("\(streak)", systemImage: "flame.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if done {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.green)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isParent { editingChore = chore }
+            }
+
+            ForEach(chore.items) { item in
+                checklistItemRow(chore, item: item)
+            }
+
+            if choreStore.isChecklistAwaitingExplicitCompletion(chore) {
+                Button("Mark Complete") {
+                    choreStore.markChecklistComplete(chore)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("markChecklistCompleteButton-\(chore.id ?? "")")
+            }
+        }
+        .swipeActions {
+            if isParent {
+                Button("Delete", role: .destructive) { choreStore.deleteChore(chore) }
+            }
+        }
+    }
+
+    private func checklistItemRow(_ chore: Chore, item: Chore.ChecklistItem) -> some View {
+        let checked = choreStore.isChecklistItemChecked(chore, itemId: item.id)
+
+        return Button {
+            toggleChecklistItem(chore, item: item, checked: checked)
+        } label: {
+            HStack {
+                Image(systemName: checked ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(checked ? .green : .secondary)
+                Text(item.title)
+                    .strikethrough(checked)
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 28)
+        .accessibilityIdentifier("checklistItemCheckbox-\(chore.id ?? "")-\(item.id)")
+    }
+
+    /// Checking is always safe to do directly. Unchecking is too, unless
+    /// the chore already completed today — then it's a reversal that takes
+    /// points back, so it's confirmed first (see the alert in `body`).
+    private func toggleChecklistItem(_ chore: Chore, item: Chore.ChecklistItem, checked: Bool) {
+        guard checked else {
+            choreStore.checkItem(chore, itemId: item.id)
+            return
+        }
+        if choreStore.isCompletedToday(chore) {
+            pendingChecklistReversal = PendingChecklistReversal(chore: chore, item: item)
+        } else {
+            choreStore.uncheckItem(chore, itemId: item.id)
         }
     }
 
