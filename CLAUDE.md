@@ -64,9 +64,28 @@ Some behavior can't be tested through XCUITest at all, because the suite drives 
 
 They live under `backend/cdk/` because ESM resolves imports relative to the file, and `node_modules` is there.
 
+### Iterating on a fix: `with-dev-stack.sh`, not `with-ephemeral-stack.sh`
+
+**`with-ephemeral-stack.sh` deploys *and* destroys a full stack set on every single invocation** — right for a clean, final confirmation run, but ruinous for a debugging loop: each attempt pays a full create (~1–5 min) plus a full teardown (~2–3 min), even if the only thing that changed is one line in one Lambda. Running that loop 30 times to chase down a bug is measured in hours.
+
+**`backend/scripts/with-dev-stack.sh` has the same `-- <command...>` interface but deploys to a stable, per-developer stage (`dev-$(whoami)` by default, override with `STARTIME_DEV_STAGE`) and never tears down on exit.** The first run pays the full deploy cost same as always; every run after that is an incremental `cdk deploy` — CloudFormation only touches what actually changed, so a single-Lambda-file edit redeploys in **~1 minute**, not minutes-plus-teardown. Benchmarked: full deploy 5:09, incremental redeploy after touching one handler 1:00, full teardown 2:18 — so a 30-iteration debug session drops from ~3.7 hours (`with-ephemeral-stack.sh` × 30) to ~36 minutes (one `with-dev-stack.sh` deploy, 29 incremental redeploys, one manual teardown at the end).
+
+```bash
+# Debugging loop: re-run after each code change
+backend/scripts/with-dev-stack.sh -- node backend/cdk/scripts/verify-checklist-completion.mjs
+
+# When done, tear it down yourself -- this script never does it for you.
+# (with-dev-stack.sh prints this exact command after every run)
+(cd backend/cdk && npx cdk destroy --all --context stage="dev-$(whoami)")
+```
+
+Use `with-ephemeral-stack.sh` for a from-scratch confirmation (e.g. right before considering something done); use `with-dev-stack.sh` for everything in between. Since the dev stage isn't `prod`, the DynamoDB table and Cognito User Pool use `RemovalPolicy.DESTROY`, so `cdk destroy` cleans it up completely — but nothing destroys it automatically, so don't leave it running past the debugging session.
+
+A local emulator (MiniStack) was evaluated as a faster alternative and rejected: its Cognito emulation doesn't execute Lambda triggers (`PreSignUp`/`PostConfirmation` never fire, and it lets an unconfirmed user complete `USER_PASSWORD_AUTH` sign-in, which real Cognito rejects), so `custom:legacy_uid` — the claim every backend handler keys identity on — never ends up in the token. That breaks every authenticated endpoint, not just an edge case, so it's not usable for this app's tests even though its raw deploy speed (~7s for the full stack) was otherwise excellent.
+
 ### Cost/latency note
 
-Each ephemeral run deploys and destroys real AWS resources — typically ~1–3 minutes each way, longer under throttling. Prefer targeting a single test while iterating.
+Each ephemeral run deploys and destroys real AWS resources — typically ~1–3 minutes each way, longer under throttling. Prefer `with-dev-stack.sh` while iterating (above); reserve repeated `with-ephemeral-stack.sh` runs for final confirmation.
 
 ### Installing on a physical device
 
