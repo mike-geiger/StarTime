@@ -17,6 +17,9 @@ struct ProgressTabView: View {
                             pointsChart(for: child.uid)
                             streakRows(for: child.uid)
                         }
+                        Section("\(child.name) — History") {
+                            pastRows(for: choreStore.pastCompletions(for: child.uid))
+                        }
                     }
                     if childMembers.isEmpty {
                         Text("Invite a child from Settings to see progress.")
@@ -28,6 +31,9 @@ struct ProgressTabView: View {
                     }
                     Section("Streaks") {
                         streakRows(for: myUID)
+                    }
+                    Section("History") {
+                        pastRows(for: choreStore.pastCompletions(for: myUID))
                     }
                 }
             }
@@ -102,6 +108,60 @@ struct ProgressTabView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func pastRows(for completions: [ChoreCompletion]) -> some View {
+        if completions.isEmpty {
+            Text("No completions yet")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(completions) { completion in
+                pastCompletionRow(completion)
+            }
+        }
+    }
+
+    /// `pastCompletionRow-<id>` is set on this row's `HStack`, the same
+    /// container-identifier caveat as `recurringChoreRow-<id>` in
+    /// `ManageChoresView` — SwiftUI doesn't reliably surface a `List` row
+    /// container's identifier to `app.otherElements`, so a UI test should
+    /// query by visible text instead.
+    private func pastCompletionRow(_ completion: ChoreCompletion) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(completion.choreTitle)
+                    .strikethrough(completion.isReversed)
+                Text(relativeDateString(for: completion.completedAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if completion.isReversed {
+                    Label("Undone", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let note = completion.reversalNote, !note.isEmpty {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .italic()
+                }
+            }
+
+            Spacer()
+
+            Text("\(completion.pointsAwarded) pts")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("pastCompletionRow-\(completion.id ?? "")")
+    }
+
+    private func relativeDateString(for date: Date?) -> String {
+        guard let date else { return "" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

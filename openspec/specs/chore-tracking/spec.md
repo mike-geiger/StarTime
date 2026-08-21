@@ -8,7 +8,7 @@ Chores are the thing kids do to earn points: how parents define them, how recurr
 
 ### Requirement: Parents define chores assigned to a household member
 
-The system SHALL let parents create, edit, and delete chores, each with a title, icon, point value, recurrence, an assignee, and an optional ordered list of checklist items (each with a title). A chore with no checklist items completes as a single action, exactly as before; a chore with checklist items completes only once every item is checked, per the checklist requirements below.
+The system SHALL let parents create, edit, and delete chores, each with a title, icon, point value, recurrence, an assignee, and an optional ordered list of checklist items (each with a title). A chore with no checklist items completes as a single action, exactly as before; a chore with checklist items completes only once every item is checked, per the checklist requirements below. Editing and deleting SHALL be available for a chore regardless of whether it is currently due — a parent is never limited to acting only on chores that happen to be due today.
 
 #### Scenario: Parent creates a chore
 
@@ -29,6 +29,11 @@ The system SHALL let parents create, edit, and delete chores, each with a title,
 
 - **WHEN** a parent deletes a chore
 - **THEN** it stops appearing in chore lists, while completions already recorded against it remain in history
+
+#### Scenario: Parent edits a chore that is not currently due
+
+- **WHEN** a parent edits a daily or weekly chore that is not due on the day being viewed
+- **THEN** the change is saved, and the chore reflects the new title, icon, point value, recurrence, or assignee wherever it is subsequently shown
 
 ### Requirement: Recurrence determines when a chore is due
 
@@ -136,7 +141,7 @@ The system SHALL derive a chore's streak by counting backward over the days it w
 
 ### Requirement: Recurring chores are visible on days they are not due
 
-The system SHALL show every daily or weekly chore assigned to a member, together with a human-readable description of its schedule, regardless of whether it is due on the day being viewed. This is in addition to, not a replacement for, showing it as due on the days its recurrence says it is due.
+The system SHALL show every daily or weekly chore assigned to a member, together with a human-readable description of its schedule, regardless of whether it is due on the day being viewed. This is in addition to, not a replacement for, showing it as due on the days its recurrence says it is due. Recurring chores SHALL be shown on a distinct chore-management view from the due-today list, and a parent viewing that management view SHALL be able to edit or delete any recurring chore shown there, using the same edit and delete interaction available for due-today chores.
 
 #### Scenario: Weekly chore visible on a non-due day
 
@@ -153,9 +158,24 @@ The system SHALL show every daily or weekly chore assigned to a member, together
 - **WHEN** a chore has one-time (non-recurring) recurrence
 - **THEN** it is not included among the chores shown with a recurring schedule
 
+#### Scenario: Recurring chores are absent from the due-today list
+
+- **WHEN** a parent or child views the due-today chore list
+- **THEN** daily and weekly chores not due today are not shown there; they appear only in the chore-management view
+
+#### Scenario: Parent edits a recurring chore from the management view
+
+- **WHEN** a parent selects a recurring chore in the chore-management view
+- **THEN** they can change its title, icon, point value, recurrence, or assignee, and the update is saved
+
+#### Scenario: Parent deletes a recurring chore from the management view
+
+- **WHEN** a parent deletes a recurring chore from the chore-management view
+- **THEN** it stops appearing in chore lists, while completions already recorded against it remain in history
+
 ### Requirement: Completion history is visible independent of current due status
 
-The system SHALL show a member's completed chores as history — chore title, points awarded, when completed, and whether the completion was later reversed — regardless of whether that chore is currently due, currently visible as due, or has since been deleted or reconfigured.
+The system SHALL show a member's completed chores as history — chore title, points awarded, when completed, and whether the completion was later reversed — regardless of whether that chore is currently due, currently visible as due, or has since been deleted or reconfigured. Completion history SHALL be shown alongside other progress information, not on the due-today chore list.
 
 #### Scenario: Completed one-time chore appears in history
 
@@ -176,6 +196,11 @@ The system SHALL show a member's completed chores as history — chore title, po
 
 - **WHEN** a completion has been reversed
 - **THEN** it remains visible in history, shown as reversed, including any note given at reversal
+
+#### Scenario: History is not part of the due-today chore list
+
+- **WHEN** a parent or child views the due-today chore list
+- **THEN** past completions are not shown there; they appear alongside progress information instead
 
 ### Requirement: A checklist chore completes only once every item is checked
 

@@ -701,6 +701,9 @@ final class StarTimeUITests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         confirm.tap()
 
+        // Completion history (including reversal state) now lives in the
+        // Progress tab, not on the Chores screen -- see ManageChoresView.
+        tapTab(app, "Progress")
         XCTAssertTrue(
             app.staticTexts["Undone"].waitForExistence(timeout: 10),
             "The reversed completion should show in history, marked undone"
@@ -742,6 +745,9 @@ final class StarTimeUITests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Reversing should offer to confirm even without typing a note")
         confirm.tap() // no note entered
 
+        // Completion history (including reversal state) now lives in the
+        // Progress tab, not on the Chores screen -- see ManageChoresView.
+        tapTab(app, "Progress")
         XCTAssertTrue(
             app.staticTexts["Undone"].waitForExistence(timeout: 10),
             "A note-less self-reversal should still show in history, marked undone"
@@ -787,12 +793,13 @@ final class StarTimeUITests: XCTestCase {
         }
         XCTAssertTrue(app.staticTexts["Morning Chores"].waitForExistence(timeout: 10))
 
-        // A single checklist chore shows its title exactly twice (once in
-        // Active, once in Recurring) -- more than that means save() took
-        // the create branch instead of update, leaving the original
-        // untouched and adding a second, separate chore.
+        // The Chores screen now shows only the Active section (Recurring
+        // moved to Manage Chores), so a single daily chore's title should
+        // appear exactly once here -- more than that means save() took the
+        // create branch instead of update, leaving the original untouched
+        // and adding a second, separate chore.
         let allTitles = app.staticTexts.matching(NSPredicate(format: "label == 'Morning Chores'"))
-        XCTAssertEqual(allTitles.count, 2, "Expected exactly one chore (title shown twice: Active + Recurring), found \(allTitles.count) occurrences -- possible duplicate chore")
+        XCTAssertEqual(allTitles.count, 1, "Expected exactly one chore shown on the Chores screen, found \(allTitles.count) occurrences -- possible duplicate chore")
 
         // Reopen the editor and count fields directly -- isolates whether
         // the save itself round-tripped 2 items, independent of whatever
@@ -819,6 +826,126 @@ final class StarTimeUITests: XCTestCase {
             app.staticTexts["11"].waitForExistence(timeout: 10),
             "The explicit Mark Complete action should credit the chore's points (11, after the points bump earlier in this edit)"
         )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Manage Chores makes a recurring chore editable — mirroring how Active
+    /// chores are already edited — and the update round-trips back into both
+    /// Manage Chores and (since it's a daily chore, due today) the Chores
+    /// screen's Active section.
+    @MainActor
+    func testStage8ParentEditsARecurringChoreFromManageChores() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithRecurringChore(app: app, prefix: "manage8a")
+
+        tapManageChoresButton(app: app)
+
+        let recurringRow = app.staticTexts["Make bed"].firstMatch
+        XCTAssertTrue(recurringRow.waitForExistence(timeout: 10), "The daily chore should appear in Manage Chores")
+        recurringRow.tap()
+
+        XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5), "Tapping a recurring chore as a parent should open the editor")
+        let incrementButton = app.steppers.firstMatch.buttons["Increment"]
+        XCTAssertTrue(incrementButton.waitForExistence(timeout: 5))
+        for _ in 0..<3 { incrementButton.tap() } // 5 -> 8 pts
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.staticTexts["8 pts"].waitForExistence(timeout: 10), "Manage Chores should reflect the updated points")
+
+        app.buttons["Done"].tap()
+
+        XCTAssertTrue(
+            app.staticTexts["8 pts"].waitForExistence(timeout: 10),
+            "The Chores screen's Active section should reflect the same update, since the chore is due today"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Swipe-to-delete on Manage Chores mirrors the Active-chore delete
+    /// interaction, and removes the chore from both screens.
+    @MainActor
+    func testStage8ParentDeletesARecurringChoreFromManageChores() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithRecurringChore(app: app, prefix: "manage8b")
+
+        tapManageChoresButton(app: app)
+
+        let recurringRow = app.staticTexts["Make bed"].firstMatch
+        XCTAssertTrue(recurringRow.waitForExistence(timeout: 10), "The daily chore should appear in Manage Chores")
+        recurringRow.swipeLeft()
+
+        let deleteButton = app.buttons["Delete"].firstMatch
+        XCTAssertTrue(deleteButton.waitForExistence(timeout: 5), "Swiping a recurring chore as a parent should reveal Delete")
+        deleteButton.tap()
+
+        let leftManageChores = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: recurringRow)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [leftManageChores], timeout: 15), .completed,
+            "A deleted chore should leave Manage Chores"
+        )
+
+        app.buttons["Done"].tap()
+
+        XCTAssertFalse(app.staticTexts["Make bed"].exists, "A deleted chore should also no longer appear on the Chores screen")
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Recurring and Past used to live on the Chores screen itself; both
+    /// moved out (to Manage Chores and Progress, respectively), so the
+    /// screen should show only what's due today.
+    @MainActor
+    func testStage8ChoresScreenShowsOnlyActiveSection() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithRecurringChore(app: app, prefix: "manage8c")
+
+        XCTAssertTrue(app.staticTexts["Kiddo — Active"].waitForExistence(timeout: 10), "Chores screen should still show the Active section")
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Recurring'")).firstMatch.exists,
+            "Chores screen should no longer show a Recurring section"
+        )
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Past'")).firstMatch.exists,
+            "Chores screen should no longer show a Past section"
+        )
+
+        tearDownAccounts(app: app, accounts: accounts)
+    }
+
+    /// Completion history moved from the Chores screen into Progress, for
+    /// both roles: a parent viewing a child's history, and a child viewing
+    /// their own.
+    @MainActor
+    func testStage8CompletionHistoryVisibleInProgressForParentAndChild() throws {
+        let app = makeApp()
+        app.launch()
+
+        let accounts = setUpParentWithRecurringChore(app: app, prefix: "manage8d")
+
+        let completeButton = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'completeChoreButton-'")).firstMatch
+        XCTAssertTrue(completeButton.waitForExistence(timeout: 5))
+        completeButton.tap()
+
+        tapTab(app, "Progress")
+        XCTAssertTrue(
+            app.staticTexts["Kiddo — History"].waitForExistence(timeout: 10),
+            "Parent's Progress tab should show a History section for the child"
+        )
+        XCTAssertTrue(app.staticTexts["Make bed"].waitForExistence(timeout: 5), "Completed chore should appear in history")
+
+        resetToSignedOutState(app: app)
+        signIn(app: app, email: accounts.childEmail, password: accounts.password)
+        tapTab(app, "Progress")
+        XCTAssertTrue(app.staticTexts["History"].waitForExistence(timeout: 10), "Child's own Progress tab should show a History section")
+        XCTAssertTrue(app.staticTexts["Make bed"].waitForExistence(timeout: 5), "Completed chore should appear in the child's own history")
 
         tearDownAccounts(app: app, accounts: accounts)
     }
@@ -1080,6 +1207,95 @@ final class StarTimeUITests: XCTestCase {
         dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
         XCTAssertTrue(app.staticTexts["Morning Chores"].waitForExistence(timeout: 10))
         return accounts
+    }
+
+    /// Leaves the app signed in as the parent, on the Chores tab, with one
+    /// daily-recurring chore ("Make bed", 5 points by default) assigned to
+    /// Kiddo.
+    private func setUpParentWithRecurringChore(
+        app: XCUIApplication,
+        prefix: String
+    ) -> (parentEmail: String, childEmail: String, password: String) {
+        resetToSignedOutState(app: app)
+
+        let runId = Int(Date().timeIntervalSince1970)
+        let parentEmail = "parent-\(prefix)-\(runId)@example.com"
+        let childEmail = "child-\(prefix)-\(runId)@example.com"
+        let password = "TestPassword123!"
+
+        signUp(app: app, email: parentEmail, password: password)
+
+        let createHouseholdButton = app.buttons["Create a household"]
+        XCTAssertTrue(createHouseholdButton.waitForExistence(timeout: 15))
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+        createHouseholdButton.tap()
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 5))
+        app.textFields["Your name"].tap()
+        app.textFields["Your name"].typeText("Dad")
+        app.textFields["Household name (e.g. \"The Geigers\")"].tap()
+        app.textFields["Household name (e.g. \"The Geigers\")"].typeText("The Geigers")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Chores"].waitForExistence(timeout: 15))
+        tapTab(app, "Settings")
+
+        app.buttons["Invite a child"].tap()
+        let codeText = app.staticTexts.matching(identifier: "generatedInviteCode").firstMatch
+        XCTAssertTrue(codeText.waitForExistence(timeout: 10))
+        let inviteCode = codeText.label
+
+        app.buttons["Sign Out"].tap()
+
+        signUp(app: app, email: childEmail, password: password)
+
+        let joinButton = app.buttons["Join with an invite code"]
+        XCTAssertTrue(joinButton.waitForExistence(timeout: 15))
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+        joinButton.tap()
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 5))
+        app.textFields["Your name"].tap()
+        app.textFields["Your name"].typeText("Kiddo")
+        app.textFields["Invite code"].tap()
+        app.textFields["Invite code"].typeText(inviteCode)
+        app.buttons["Join"].tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Chores"].waitForExistence(timeout: 15))
+        resetToSignedOutState(app: app)
+
+        signIn(app: app, email: parentEmail, password: password)
+        tapTab(app, "Chores")
+        dismissSavePasswordPromptIfPresent(app: app, timeout: 2)
+
+        tapAddButton(app: app)
+        XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5))
+        app.textFields["Title"].tap()
+        app.textFields["Title"].typeText("Make bed")
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.staticTexts["Make bed"].waitForExistence(timeout: 10))
+
+        return (parentEmail, childEmail, password)
+    }
+
+    /// Opens Manage Chores from the Chores screen toolbar, retrying the tap
+    /// (same stale hit-point issue as `tapAddButton`) until the screen's own
+    /// navigation title actually appears.
+    private func tapManageChoresButton(app: XCUIApplication) {
+        let trigger = app.buttons["ellipsis.circle"]
+        XCTAssertTrue(trigger.waitForExistence(timeout: 5), "Should find the Manage Chores toolbar button")
+
+        let manageChoresTitle = app.navigationBars["Manage Chores"]
+        for _ in 0..<5 {
+            if manageChoresTitle.exists { return }
+            Thread.sleep(forTimeInterval: 0.4)
+            trigger.tap()
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        XCTAssertTrue(manageChoresTitle.waitForExistence(timeout: 2), "Manage Chores screen should open after repeated taps")
     }
 
     /// Opens the add-chore/add-reward sheet, retrying the tap (same stale

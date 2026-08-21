@@ -6,6 +6,7 @@ struct ChoresView: View {
     @EnvironmentObject private var choreStore: ChoreStore
 
     @State private var showingAddChore = false
+    @State private var showingManageChores = false
     @State private var editingChore: Chore?
     /// Unchecking an item on an already-completed checklist is a reversal —
     /// it takes back the points, so it asks first, the same shape
@@ -37,6 +38,9 @@ struct ChoresView: View {
             }
             .navigationTitle("Chores")
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingManageChores = true } label: { Image(systemName: "ellipsis.circle") }
+                }
                 if isParent {
                     ToolbarItem(placement: .primaryAction) {
                         Button { showingAddChore = true } label: { Image(systemName: "plus") }
@@ -48,6 +52,9 @@ struct ChoresView: View {
             }
             .sheet(item: $editingChore) { chore in
                 AddEditChoreView(choreStore: choreStore, household: householdStore.household, editingChore: chore)
+            }
+            .sheet(isPresented: $showingManageChores) {
+                ManageChoresView()
             }
         }
         // Chore mutations (add/edit/delete/check/uncheck) had no error
@@ -97,12 +104,6 @@ struct ChoresView: View {
         Section("\(name) — Active") {
             choreRows(for: choreStore.choresDueToday(for: uid))
         }
-        Section("\(name) — Recurring") {
-            recurringRows(for: choreStore.recurringChores(for: uid))
-        }
-        Section("\(name) — Past") {
-            pastRows(for: choreStore.pastCompletions(for: uid))
-        }
     }
 
     @ViewBuilder
@@ -115,96 +116,6 @@ struct ChoresView: View {
                 choreRow(chore)
             }
         }
-    }
-
-    @ViewBuilder
-    private func recurringRows(for chores: [Chore]) -> some View {
-        if chores.isEmpty {
-            Text("No recurring chores yet")
-                .foregroundStyle(.secondary)
-        } else {
-            ForEach(chores) { chore in
-                recurringChoreRow(chore)
-            }
-        }
-    }
-
-    /// `recurringChoreRow-<id>` is set on this row's `HStack`, the same
-    /// pattern `pendingRedemptionRow-<id>` uses in RewardsView — SwiftUI
-    /// doesn't reliably surface a `List` row container's identifier to
-    /// `app.otherElements`, so a future UI test should query by visible
-    /// text instead (see `StarTimeUITests.queuedRequest`).
-    private func recurringChoreRow(_ chore: Chore) -> some View {
-        HStack {
-            Image(systemName: chore.icon)
-                .foregroundStyle(.tint)
-                .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(chore.title)
-                Text(chore.scheduleDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Text("\(chore.points) pts")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityIdentifier("recurringChoreRow-\(chore.id ?? "")")
-    }
-
-    @ViewBuilder
-    private func pastRows(for completions: [ChoreCompletion]) -> some View {
-        if completions.isEmpty {
-            Text("No completions yet")
-                .foregroundStyle(.secondary)
-        } else {
-            ForEach(completions) { completion in
-                pastCompletionRow(completion)
-            }
-        }
-    }
-
-    /// `pastCompletionRow-<id>` has the same container-identifier caveat as
-    /// `recurringChoreRow-<id>` above.
-    private func pastCompletionRow(_ completion: ChoreCompletion) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(completion.choreTitle)
-                    .strikethrough(completion.isReversed)
-                Text(relativeDateString(for: completion.completedAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if completion.isReversed {
-                    Label("Undone", systemImage: "arrow.uturn.backward")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let note = completion.reversalNote, !note.isEmpty {
-                    Text(note)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .italic()
-                }
-            }
-
-            Spacer()
-
-            Text("\(completion.pointsAwarded) pts")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityIdentifier("pastCompletionRow-\(completion.id ?? "")")
-    }
-
-    private func relativeDateString(for date: Date?) -> String {
-        guard let date else { return "" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     private var childMembers: [(uid: String, name: String)] {
